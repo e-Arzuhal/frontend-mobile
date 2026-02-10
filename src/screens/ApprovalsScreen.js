@@ -15,6 +15,7 @@ import Header from '../components/Header';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import Button from '../components/Button';
+import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
 
 const typeLabels = {
@@ -106,49 +107,51 @@ export default function ApprovalsScreen() {
     const isActionLoading = actionLoadingId === item.id;
 
     return (
-      <Card style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardInfo}>
-            <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
-            <Text style={styles.cardType}>{typeLabels[item.type] || item.type}</Text>
+      <ScreenWrapper>
+        <Card style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardInfo}>
+              <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+              <Text style={styles.cardType}>{typeLabels[item.type] || item.type}</Text>
+            </View>
+            <Badge status={item.status} />
           </View>
-          <Badge status={item.status} />
-        </View>
 
-        <View style={styles.cardMeta}>
-          <Text style={styles.metaText}>
-            <Ionicons name="person-outline" size={12} color={colors.textMuted} />
-            {' '}{item.ownerUsername || 'Bilinmiyor'}
-          </Text>
-          <Text style={styles.metaText}>
-            <Ionicons name="calendar-outline" size={12} color={colors.textMuted} />
-            {' '}{formatDate(item.createdAt)}
-          </Text>
-        </View>
+          <View style={styles.cardMeta}>
+            <Text style={styles.metaText}>
+              <Ionicons name="person-outline" size={12} color={colors.textMuted} />
+              {' '}{item.ownerUsername || 'Bilinmiyor'}
+            </Text>
+            <Text style={styles.metaText}>
+              <Ionicons name="calendar-outline" size={12} color={colors.textMuted} />
+              {' '}{formatDate(item.createdAt)}
+            </Text>
+          </View>
 
-        <View style={styles.cardActions}>
-          <Button
-            title="Onayla"
-            variant="success"
-            size="sm"
-            onPress={() => handleApprove(item.id)}
-            loading={isActionLoading}
-            disabled={isActionLoading}
-            icon={<Ionicons name="checkmark" size={16} color={colors.textInverse} />}
-            style={styles.actionButton}
-          />
-          <Button
-            title="Reddet"
-            variant="danger"
-            size="sm"
-            onPress={() => handleReject(item.id)}
-            loading={isActionLoading}
-            disabled={isActionLoading}
-            icon={<Ionicons name="close" size={16} color={colors.textInverse} />}
-            style={styles.actionButton}
-          />
-        </View>
-      </Card>
+          <View style={styles.cardActions}>
+            <Button
+              title="Onayla"
+              variant="success"
+              size="sm"
+              onPress={() => handleApprove(item.id)}
+              loading={isActionLoading}
+              disabled={isActionLoading}
+              icon={<Ionicons name="checkmark" size={16} color={colors.textInverse} />}
+              style={styles.actionButton}
+            />
+            <Button
+              title="Reddet"
+              variant="danger"
+              size="sm"
+              onPress={() => handleReject(item.id)}
+              loading={isActionLoading}
+              disabled={isActionLoading}
+              icon={<Ionicons name="close" size={16} color={colors.textInverse} />}
+              style={styles.actionButton}
+            />
+          </View>
+        </Card>
+      </ScreenWrapper> 
     );
   };
 

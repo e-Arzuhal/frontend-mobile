@@ -14,6 +14,7 @@ import Card from '../components/Card';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import authService from '../services/auth.service';
+import ScreenWrapper from '../components/ScreenWrapper';
 import api from '../services/api.service';
 
 const tabs = [
@@ -112,42 +113,44 @@ export default function SettingsScreen() {
     switch (activeTab) {
       case 'profile':
         return (
-          <Card>
-            <Text style={styles.sectionTitle}>Profil Bilgileri</Text>
-            <Input
-              label="Ad"
-              value={profileForm.firstName}
-              onChangeText={(v) => setProfileForm((p) => ({ ...p, firstName: v }))}
-              placeholder="Adınız"
-            />
-            <Input
-              label="Soyad"
-              value={profileForm.lastName}
-              onChangeText={(v) => setProfileForm((p) => ({ ...p, lastName: v }))}
-              placeholder="Soyadınız"
-            />
-            <Input
-              label="E-posta"
-              value={profileForm.email}
-              onChangeText={(v) => setProfileForm((p) => ({ ...p, email: v }))}
-              placeholder="ornek@email.com"
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <Input
-              label="Kullanıcı Adı"
-              value={user?.username || ''}
-              editable={false}
-            />
-            <Button
-              title="Kaydet"
-              variant="accent"
-              onPress={handleSaveProfile}
-              loading={saving}
-              fullWidth
-              style={styles.saveButton}
-            />
-          </Card>
+          <ScreenWrapper>
+            <Card>
+              <Text style={styles.sectionTitle}>Profil Bilgileri</Text>
+              <Input
+                label="Ad"
+                value={profileForm.firstName}
+                onChangeText={(v) => setProfileForm((p) => ({ ...p, firstName: v }))}
+                placeholder="Adınız"
+              />
+              <Input
+                label="Soyad"
+                value={profileForm.lastName}
+                onChangeText={(v) => setProfileForm((p) => ({ ...p, lastName: v }))}
+                placeholder="Soyadınız"
+              />
+              <Input
+                label="E-posta"
+                value={profileForm.email}
+                onChangeText={(v) => setProfileForm((p) => ({ ...p, email: v }))}
+                placeholder="ornek@email.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              <Input
+                label="Kullanıcı Adı"
+                value={user?.username || ''}
+                editable={false}
+              />
+              <Button
+                title="Kaydet"
+                variant="accent"
+                onPress={handleSaveProfile}
+                loading={saving}
+                fullWidth
+                style={styles.saveButton}
+              />
+            </Card>
+          </ScreenWrapper> 
         );
       case 'security':
         return (
