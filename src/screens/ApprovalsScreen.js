@@ -107,7 +107,6 @@ export default function ApprovalsScreen() {
     const isActionLoading = actionLoadingId === item.id;
 
     return (
-      <ScreenWrapper>
         <Card style={styles.card}>
           <View style={styles.cardHeader}>
             <View style={styles.cardInfo}>
@@ -151,7 +150,6 @@ export default function ApprovalsScreen() {
             />
           </View>
         </Card>
-      </ScreenWrapper> 
     );
   };
 
@@ -164,7 +162,7 @@ export default function ApprovalsScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <ScreenWrapper>
       <View style={styles.headerPadding}>
         <Header
           title="Onaylar"
@@ -186,7 +184,7 @@ export default function ApprovalsScreen() {
           </View>
         }
       />
-    </View>
+    </ScreenWrapper>
   );
 }
 
