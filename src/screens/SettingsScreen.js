@@ -113,7 +113,6 @@ export default function SettingsScreen() {
     switch (activeTab) {
       case 'profile':
         return (
-          <ScreenWrapper>
             <Card>
               <Text style={styles.sectionTitle}>Profil Bilgileri</Text>
               <Input
@@ -150,7 +149,6 @@ export default function SettingsScreen() {
                 style={styles.saveButton}
               />
             </Card>
-          </ScreenWrapper> 
         );
       case 'security':
         return (
@@ -212,7 +210,8 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScreenWrapper>
+    <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
       <Header title="Ayarlar" subtitle="Hesap ve uygulama ayarları" />
 
       {user && (
@@ -267,6 +266,7 @@ export default function SettingsScreen() {
         style={styles.logoutButton}
       />
     </ScrollView>
+    </ScreenWrapper>
   );
 }
 
@@ -285,9 +285,8 @@ function SettingRow({ icon, title, description }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  scrollView: {
     flex: 1,
-    backgroundColor: colors.surface,
   },
   content: {
     padding: 20,

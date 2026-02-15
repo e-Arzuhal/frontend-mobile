@@ -1,6 +1,7 @@
 import api from './api.service';
 
 const contractService = {
+  analyze: (text) => api.post('/api/analysis/analyze', { text }),
   create: (data) => api.post('/api/contracts', data),
   getAll: (params) => api.get('/api/contracts', params),
   getById: (id) => api.get(`/api/contracts/${id}`),
