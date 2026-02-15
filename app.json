@@ -18,7 +18,9 @@
         "NFCReaderUsageDescription": "TC Kimlik Kartınızı NFC ile okumak için gereklidir.",
         "com.apple.developer.nfc.readersession.iso7816.select-identifiers": [
           "A0000002471001"
-        ]
+        ],
+        "NSSpeechRecognitionUsageDescription": "Konuşmanızı metne dönüştürmek için ses tanıma izni gereklidir.",
+        "NSMicrophoneUsageDescription": "Sesle yazma özelliği için mikrofon erişimi gereklidir."
       }
     },
     "android": {
@@ -26,12 +28,19 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.NFC"
+      ],
+      "package": "com.anonymous.frontendmobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withAndroidCleartext",
       "expo-secure-store",
       "expo-font",
       [
