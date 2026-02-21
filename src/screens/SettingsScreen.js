@@ -23,7 +23,7 @@ const tabs = [
   { key: 'notifications', label: 'Bildirimler', icon: 'notifications-outline' },
 ];
 
-export default function SettingsScreen() {
+export default function SettingsScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('profile');
   const [user, setUser] = useState(null);
   const [profileForm, setProfileForm] = useState({ firstName: '', lastName: '', email: '' });
@@ -153,7 +153,15 @@ export default function SettingsScreen() {
       case 'security':
         return (
           <Card>
-            <Text style={styles.sectionTitle}>Şifre Değiştir</Text>
+            <Text style={styles.sectionTitle}>Kimlik & Güvenlik</Text>
+            <SettingRow
+              icon="shield-checkmark-outline"
+              title="Kimlik Doğrulama"
+              description="TC Kimlik Kartınızı NFC ile doğrulayın"
+              onPress={() => navigation.navigate('Verification')}
+              actionIcon="chevron-forward"
+            />
+            <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Şifre Değiştir</Text>
             <Input
               label="Mevcut Şifre"
               value={passwordForm.current}
@@ -270,8 +278,8 @@ export default function SettingsScreen() {
   );
 }
 
-function SettingRow({ icon, title, description }) {
-  return (
+function SettingRow({ icon, title, description, onPress, actionIcon }) {
+  const inner = (
     <View style={styles.settingRow}>
       <View style={styles.settingIcon}>
         <Ionicons name={icon} size={20} color={colors.accent} />
@@ -280,8 +288,15 @@ function SettingRow({ icon, title, description }) {
         <Text style={styles.settingTitle}>{title}</Text>
         <Text style={styles.settingDesc}>{description}</Text>
       </View>
+      {actionIcon && (
+        <Ionicons name={actionIcon} size={18} color={colors.textMuted} />
+      )}
     </View>
   );
+  if (onPress) {
+    return <TouchableOpacity onPress={onPress} activeOpacity={0.7}>{inner}</TouchableOpacity>;
+  }
+  return inner;
 }
 
 const styles = StyleSheet.create({
