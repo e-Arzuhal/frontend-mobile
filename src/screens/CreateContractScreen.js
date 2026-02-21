@@ -22,24 +22,31 @@ import StepIndicator from '../components/StepIndicator';
 import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
 
-const contractTypes = [
-  { value: 'SALES', label: 'Satış Sözleşmesi' },
-  { value: 'RENTAL', label: 'Kira Sözleşmesi' },
-  { value: 'SERVICE', label: 'Hizmet Sözleşmesi' },
-  { value: 'EMPLOYMENT', label: 'İş Sözleşmesi' },
-  { value: 'NDA', label: 'Gizlilik Sözleşmesi' },
-  { value: 'OTHER', label: 'Diğer' },
-];
+const TOTAL_STEPS = 4;
+const stepLabels = ['Metin Girişi', 'AI Analiz', 'Taraflar', 'Önizleme'];
 
-const TOTAL_STEPS = 5; // 0-4
-const stepLabels = ['Bilgiler', 'Taraflar', 'İçerik', 'AI Analiz', 'Önizleme'];
+const TYPE_LABELS = {
+  SALES: 'Satış Sözleşmesi',
+  RENTAL: 'Kira Sözleşmesi',
+  SERVICE: 'Hizmet Sözleşmesi',
+  EMPLOYMENT: 'İş Sözleşmesi',
+  NDA: 'Gizlilik Sözleşmesi',
+  OTHER: 'Diğer Sözleşme',
+  kira_sozlesmesi: 'Kira Sözleşmesi',
+  hizmet_sozlesmesi: 'Hizmet Sözleşmesi',
+  satis_sozlesmesi: 'Satış Sözleşmesi',
+  is_sozlesmesi: 'İş Sözleşmesi',
+  borc_sozlesmesi: 'Borç Sözleşmesi',
+  vekaletname: 'Vekaletname',
+  taahhutname: 'Taahhütname',
+};
 
 export default function CreateContractScreen({ navigation }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     title: '',
-    type: 'SALES',
+    type: '',
     content: '',
     amount: '',
     counterpartyName: '',
@@ -57,14 +64,18 @@ export default function CreateContractScreen({ navigation }) {
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   };
 
+  const getTypeLabel = () => {
+    if (analysisResult?.contract_type_display) return analysisResult.contract_type_display;
+    return TYPE_LABELS[form.type] || form.type || 'Analiz Bekleniyor';
+  };
+
   const validateStep = () => {
     const e = {};
     if (currentStep === 0) {
       if (!form.title.trim()) e.title = 'Başlık gerekli';
-    } else if (currentStep === 1) {
-      if (!form.counterpartyName.trim()) e.counterpartyName = 'Karşı taraf adı gerekli';
+      if (!form.content.trim()) e.content = 'Sözleşme metni gerekli';
     } else if (currentStep === 2) {
-      if (!form.content.trim()) e.content = 'Sözleşme içeriği gerekli';
+      if (!form.counterpartyName.trim()) e.counterpartyName = 'Karşı taraf adı gerekli';
     }
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -76,12 +87,11 @@ export default function CreateContractScreen({ navigation }) {
       const result = await contractService.analyze(form.content);
       setAnalysisResult(result);
 
-      // NLP'den gelen tipi form'a uygula
-      if (result.contract_type && result.contract_type !== form.type) {
+      // NLP'den gelen tipi ve entity'leri form'a uygula
+      if (result.contract_type) {
         updateField('type', result.contract_type);
       }
 
-      // NLP'den gelen entity'leri form'a uygula
       const fields = result.nlp_result?.extracted_fields;
       if (fields) {
         if (fields.tutar && !form.amount) updateField('amount', fields.tutar);
@@ -99,10 +109,11 @@ export default function CreateContractScreen({ navigation }) {
   const handleNext = async () => {
     if (!validateStep()) return;
 
-    // Step 2'den 3'e geçerken otomatik analiz başlat
-    if (currentStep === 2 && !analysisResult) {
-      setCurrentStep(3);
-      runAnalysis();
+    if (currentStep === 0) {
+      setCurrentStep(1);
+      if (!analysisResult) {
+        runAnalysis();
+      }
       return;
     }
 
@@ -192,7 +203,7 @@ export default function CreateContractScreen({ navigation }) {
             color={completeness >= 80 ? colors.success : completeness >= 50 ? colors.warning : colors.error}
           />
           <Text style={styles.detectedType}>
-            Tespit edilen tür: {contractTypes.find((t) => t.value === analysisResult.contract_type)?.label || analysisResult.contract_type_display}
+            Tespit edilen tür: {getTypeLabel()}
           </Text>
         </Card>
 
@@ -276,41 +287,44 @@ export default function CreateContractScreen({ navigation }) {
       case 0:
         return (
           <Card>
-            <Text style={styles.stepTitle}>Temel Bilgiler</Text>
+            <Text style={styles.stepTitle}>Sözleşmenizi Anlatın</Text>
+            <Text style={styles.stepDescription}>
+              Ne tür bir sözleşmeye ihtiyacınız olduğunu doğal dilde yazın. Yapay zekamız türü ve detayları otomatik tespit edecek.
+            </Text>
             <Input
               label="Sözleşme Başlığı"
               value={form.title}
               onChangeText={(v) => updateField('title', v)}
-              placeholder="Sözleşmenin başlığını girin"
+              placeholder="Ör: Kira Sözleşmesi - Nisan 2026"
               error={errors.title}
             />
-            <Text style={styles.fieldLabel}>Sözleşme Türü</Text>
-            <View style={styles.typeGrid}>
-              {contractTypes.map((type) => (
-                <Button
-                  key={type.value}
-                  title={type.label}
-                  variant={form.type === type.value ? 'accent' : 'outline'}
-                  size="sm"
-                  onPress={() => updateField('type', type.value)}
-                  style={styles.typeButton}
-                />
-              ))}
-            </View>
-            <Input
-              label="Tutar"
-              value={form.amount}
-              onChangeText={(v) => updateField('amount', v)}
-              placeholder="Opsiyonel"
-              keyboardType="numeric"
-              icon={<Ionicons name="cash-outline" size={20} color={colors.textMuted} />}
+            <TextArea
+              label="Sözleşme Metni"
+              value={form.content}
+              onChangeText={(v) => updateField('content', v)}
+              placeholder="Sözleşmenizin içeriğini buraya yazın. Örnek: 'Ahmet Yılmaz ile Ayşe Kaya arasında İstanbul Kadıköy'deki daireyi aylık 15.000 TL'ye, 1 yıllığına kiralama sözleşmesi yapılacaktır...'"
+              error={errors.content}
+              numberOfLines={12}
+              maxLength={5000}
             />
           </Card>
         );
+
       case 1:
+        return renderAnalysisStep();
+
+      case 2:
         return (
           <Card>
             <Text style={styles.stepTitle}>Taraflar</Text>
+            {analysisResult && (
+              <View style={styles.nlpHintBox}>
+                <Ionicons name="sparkles" size={14} color={colors.accent} />
+                <Text style={styles.nlpHintText}>
+                  AI tarafından tespit edilen bilgiler ön dolduruldu. Düzenleyebilirsiniz.
+                </Text>
+              </View>
+            )}
             <Input
               label="Karşı Taraf Adı"
               value={form.counterpartyName}
@@ -326,26 +340,18 @@ export default function CreateContractScreen({ navigation }) {
               placeholder="Ör: Kiracı, Müşteri, Çalışan"
               icon={<Ionicons name="briefcase-outline" size={20} color={colors.textMuted} />}
             />
-          </Card>
-        );
-      case 2:
-        return (
-          <Card>
-            <Text style={styles.stepTitle}>Sözleşme İçeriği</Text>
-            <TextArea
-              label="İçerik"
-              value={form.content}
-              onChangeText={(v) => updateField('content', v)}
-              placeholder="Sözleşme maddelerini ve detaylarını yazın..."
-              error={errors.content}
-              numberOfLines={10}
-              maxLength={5000}
+            <Input
+              label="Tutar (Opsiyonel)"
+              value={form.amount}
+              onChangeText={(v) => updateField('amount', v)}
+              placeholder="Ör: 15000"
+              keyboardType="numeric"
+              icon={<Ionicons name="cash-outline" size={20} color={colors.textMuted} />}
             />
           </Card>
         );
+
       case 3:
-        return renderAnalysisStep();
-      case 4:
         return (
           <Card>
             <Text style={styles.stepTitle}>Önizleme</Text>
@@ -355,16 +361,14 @@ export default function CreateContractScreen({ navigation }) {
             </View>
             <View style={styles.previewRow}>
               <Text style={styles.previewLabel}>Tür:</Text>
-              <Text style={styles.previewValue}>
-                {contractTypes.find((t) => t.value === form.type)?.label}
-              </Text>
+              <Text style={styles.previewValue}>{getTypeLabel()}</Text>
             </View>
-            {form.amount && (
+            {form.amount ? (
               <View style={styles.previewRow}>
                 <Text style={styles.previewLabel}>Tutar:</Text>
                 <Text style={styles.previewValue}>{form.amount}</Text>
               </View>
-            )}
+            ) : null}
             <View style={styles.previewRow}>
               <Text style={styles.previewLabel}>Karşı Taraf:</Text>
               <Text style={styles.previewValue}>
@@ -387,6 +391,7 @@ export default function CreateContractScreen({ navigation }) {
   };
 
   const lastStep = TOTAL_STEPS - 1;
+  const isAnalyzing = currentStep === 1 && analyzing;
 
   return (
     <ScreenWrapper>
@@ -408,7 +413,7 @@ export default function CreateContractScreen({ navigation }) {
         {renderStep()}
 
         <View style={styles.actions}>
-          {currentStep > 0 && (
+          {currentStep > 0 && !isAnalyzing && (
             <Button
               title="Geri"
               variant="outline"
@@ -419,12 +424,13 @@ export default function CreateContractScreen({ navigation }) {
           )}
           {currentStep < lastStep ? (
             <Button
-              title={currentStep === 2 ? 'Analiz Et' : 'İleri'}
+              title={currentStep === 0 ? 'Analiz Et' : 'İleri'}
               variant="accent"
               onPress={handleNext}
-              loading={analyzing}
-              icon={currentStep === 2 ? <Ionicons name="sparkles" size={18} color={colors.textInverse} /> : undefined}
-              style={[styles.actionButton, styles.actionButtonRight]}
+              loading={isAnalyzing}
+              disabled={isAnalyzing}
+              icon={currentStep === 0 ? <Ionicons name="sparkles" size={18} color={colors.textInverse} /> : undefined}
+              style={[styles.actionButton, currentStep > 0 && !isAnalyzing && styles.actionButtonRight]}
             />
           ) : (
             <Button
@@ -455,22 +461,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.headingMedium,
     fontSize: 18,
     color: colors.text,
-    marginBottom: 20,
-  },
-  fieldLabel: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 14,
-    color: colors.text,
     marginBottom: 8,
   },
-  typeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
-  },
-  typeButton: {
-    marginBottom: 4,
+  stepDescription: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginBottom: 20,
+    lineHeight: 21,
   },
   // Analysis step
   analysisCard: {
@@ -578,6 +576,23 @@ const styles = StyleSheet.create({
   },
   reanalyzeButton: {
     marginTop: 4,
+  },
+  // NLP hint
+  nlpHintBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.accentMuted,
+    borderRadius: radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  nlpHintText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.accent,
+    flex: 1,
   },
   // Preview
   previewRow: {
