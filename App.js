@@ -30,12 +30,14 @@ import ContractsScreen from './src/screens/ContractsScreen';
 import ContractDetailScreen from './src/screens/ContractDetailScreen';
 import ApprovalsScreen from './src/screens/ApprovalsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import VerificationScreen from './src/screens/VerificationScreen';
 
 SplashScreen.preventAutoHideAsync();
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 const ContractsStack = createNativeStackNavigator();
+const SettingsStack = createNativeStackNavigator();
 
 function ContractsStackScreen() {
   return (
@@ -43,6 +45,15 @@ function ContractsStackScreen() {
       <ContractsStack.Screen name="ContractsList" component={ContractsScreen} />
       <ContractsStack.Screen name="ContractDetail" component={ContractDetailScreen} />
     </ContractsStack.Navigator>
+  );
+}
+
+function SettingsStackScreen() {
+  return (
+    <SettingsStack.Navigator screenOptions={{ headerShown: false }}>
+      <SettingsStack.Screen name="SettingsHome" component={SettingsScreen} />
+      <SettingsStack.Screen name="Verification" component={VerificationScreen} />
+    </SettingsStack.Navigator>
   );
 }
 
@@ -112,7 +123,7 @@ function MainTabs() {
       />
       <Tab.Screen
         name="Settings"
-        component={SettingsScreen}
+        component={SettingsStackScreen}
         options={{ tabBarLabel: 'Ayarlar' }}
       />
     </Tab.Navigator>
