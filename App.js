@@ -31,6 +31,7 @@ import ContractDetailScreen from './src/screens/ContractDetailScreen';
 import ApprovalsScreen from './src/screens/ApprovalsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import VerificationScreen from './src/screens/VerificationScreen';
+import ChatbotScreen from './src/screens/ChatbotScreen';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -79,6 +80,9 @@ function MainTabs() {
             case 'Approvals':
               iconName = focused ? 'checkmark-done-circle' : 'checkmark-done-circle-outline';
               break;
+            case 'Chatbot':
+              iconName = focused ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline';
+              break;
             case 'Settings':
               iconName = focused ? 'settings' : 'settings-outline';
               break;
@@ -120,6 +124,11 @@ function MainTabs() {
         name="Approvals"
         component={ApprovalsScreen}
         options={{ tabBarLabel: 'Onaylar' }}
+      />
+      <Tab.Screen
+        name="Chatbot"
+        component={ChatbotScreen}
+        options={{ tabBarLabel: 'Asistan' }}
       />
       <Tab.Screen
         name="Settings"
