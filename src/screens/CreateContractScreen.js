@@ -17,13 +17,12 @@ import Card from '../components/Card';
 import Input from '../components/Input';
 import TextArea from '../components/TextArea';
 import Button from '../components/Button';
-import ProgressBar from '../components/ProgressBar';
 import StepIndicator from '../components/StepIndicator';
 import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
 
 const TOTAL_STEPS = 4;
-const stepLabels = ['Metin Girişi', 'AI Analiz', 'Taraflar', 'Önizleme'];
+const stepLabels = ['Metin Girişi', 'Sözleşme Önerisi', 'PDF Önizleme', 'Onay & İmza'];
 
 const TYPE_LABELS = {
   SALES: 'Satış Sözleşmesi',
@@ -41,6 +40,17 @@ const TYPE_LABELS = {
   taahhutname: 'Taahhütname',
 };
 
+const ENTITY_LABELS = {
+  tutar: 'Tutar',
+  tarih: 'Tarih',
+  taraflar: 'Taraflar',
+  alacakli: 'Alacaklı',
+  borclu: 'Borçlu',
+  miktar: 'Miktar',
+  sure: 'Süre',
+  adres: 'Adres',
+};
+
 export default function CreateContractScreen({ navigation }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -53,8 +63,6 @@ export default function CreateContractScreen({ navigation }) {
     counterpartyRole: '',
   });
   const [errors, setErrors] = useState({});
-
-  // AI Analiz state
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [selectedSuggestions, setSelectedSuggestions] = useState({});
@@ -74,8 +82,6 @@ export default function CreateContractScreen({ navigation }) {
     if (currentStep === 0) {
       if (!form.title.trim()) e.title = 'Başlık gerekli';
       if (!form.content.trim()) e.content = 'Sözleşme metni gerekli';
-    } else if (currentStep === 2) {
-      if (!form.counterpartyName.trim()) e.counterpartyName = 'Karşı taraf adı gerekli';
     }
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -87,10 +93,7 @@ export default function CreateContractScreen({ navigation }) {
       const result = await contractService.analyze(form.content);
       setAnalysisResult(result);
 
-      // NLP'den gelen tipi ve entity'leri form'a uygula
-      if (result.contract_type) {
-        updateField('type', result.contract_type);
-      }
+      if (result.contract_type) updateField('type', result.contract_type);
 
       const fields = result.nlp_result?.extracted_fields;
       if (fields) {
@@ -108,36 +111,32 @@ export default function CreateContractScreen({ navigation }) {
 
   const handleNext = async () => {
     if (!validateStep()) return;
-
     if (currentStep === 0) {
       setCurrentStep(1);
-      if (!analysisResult) {
-        runAnalysis();
-      }
+      if (!analysisResult) runAnalysis();
       return;
     }
-
     setCurrentStep((prev) => Math.min(prev + 1, TOTAL_STEPS - 1));
   };
 
-  const handleBack = () => {
-    setCurrentStep((prev) => Math.max(prev - 1, 0));
-  };
+  const handleBack = () => setCurrentStep((prev) => Math.max(prev - 1, 0));
 
   const toggleSuggestion = (index) => {
-    setSelectedSuggestions((prev) => ({
-      ...prev,
-      [index]: !prev[index],
-    }));
+    setSelectedSuggestions((prev) => ({ ...prev, [index]: !prev[index] }));
   };
 
   const getEnrichedContent = () => {
     const suggestions = analysisResult?.graphrag_result?.suggestions?.suggestions || [];
     const selected = suggestions.filter((_, i) => selectedSuggestions[i]);
     if (selected.length === 0) return form.content;
-
     const additions = selected.map((s) => `\n\n[${s.field_name}]: ${s.message}`).join('');
     return form.content + '\n\n--- Ek Maddeler ---' + additions;
+  };
+
+  const getClauseCount = () => {
+    const matched = analysisResult?.graphrag_result?.analysis?.matched_fields || [];
+    const selectedCount = Object.values(selectedSuggestions).filter(Boolean).length;
+    return matched.length + selectedCount;
   };
 
   const handleSave = async () => {
@@ -145,9 +144,7 @@ export default function CreateContractScreen({ navigation }) {
     try {
       const enrichedContent = getEnrichedContent();
       await contractService.create({ ...form, content: enrichedContent });
-      Alert.alert('Başarılı', 'Sözleşme başarıyla oluşturuldu.', [
-        { text: 'Tamam', onPress: () => navigation.goBack() },
-      ]);
+      setCurrentStep(3);
     } catch (error) {
       Alert.alert('Hata', error.message || 'Sözleşme oluşturulamadı.');
     } finally {
@@ -155,13 +152,22 @@ export default function CreateContractScreen({ navigation }) {
     }
   };
 
-  const renderAnalysisStep = () => {
+  const handleReset = () => {
+    setCurrentStep(0);
+    setForm({ title: '', type: '', content: '', amount: '', counterpartyName: '', counterpartyRole: '' });
+    setErrors({});
+    setAnalysisResult(null);
+    setSelectedSuggestions({});
+  };
+
+  // Step 1: Sözleşme Önerisi
+  const renderStep1 = () => {
     if (analyzing) {
       return (
         <Card>
           <View style={styles.analyzingContainer}>
             <ActivityIndicator size="large" color={colors.accent} />
-            <Text style={styles.analyzingText}>Sözleşme metni analiz ediliyor...</Text>
+            <Text style={styles.analyzingText}>Sözleşme analiz ediliyor...</Text>
             <Text style={styles.analyzingSubtext}>NLP ve GraphRAG ile akıllı analiz</Text>
           </View>
         </Card>
@@ -171,8 +177,8 @@ export default function CreateContractScreen({ navigation }) {
     if (!analysisResult) {
       return (
         <Card>
-          <Text style={styles.stepTitle}>AI Analiz</Text>
-          <Text style={styles.analyzeDescription}>
+          <Text style={styles.stepTitle}>Sözleşme Önerisi</Text>
+          <Text style={styles.stepDescription}>
             Sözleşme metninizi yapay zeka ile analiz edin. Eksik maddeler ve öneriler alın.
           </Text>
           <Button
@@ -187,89 +193,119 @@ export default function CreateContractScreen({ navigation }) {
     }
 
     const graphRag = analysisResult.graphrag_result;
-    const completeness = analysisResult.completeness_score || 0;
     const suggestions = graphRag?.suggestions?.suggestions || [];
     const matched = graphRag?.analysis?.matched_fields || [];
     const missingRequired = graphRag?.analysis?.missing_required || [];
+    const extractedFields = analysisResult.nlp_result?.extracted_fields || {};
+
+    const entityRows = Object.entries(extractedFields)
+      .filter(([, v]) => v && (typeof v === 'string' || (Array.isArray(v) && v.length > 0)))
+      .map(([k, v]) => ({
+        label: ENTITY_LABELS[k] || k,
+        value: Array.isArray(v) ? v.join(', ') : String(v),
+      }));
 
     return (
       <>
-        {/* Tamamlanma Skoru */}
-        <Card style={styles.analysisCard}>
-          <Text style={styles.stepTitle}>AI Analiz Sonucu</Text>
-          <ProgressBar
-            progress={completeness}
-            label="Tamamlanma"
-            color={completeness >= 80 ? colors.success : completeness >= 50 ? colors.warning : colors.error}
-          />
-          <Text style={styles.detectedType}>
-            Tespit edilen tür: {getTypeLabel()}
-          </Text>
+        {/* NLP Analiz Sonucu */}
+        <Card style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="hardware-chip-outline" size={19} color={colors.primary} />
+            <Text style={styles.sectionTitle}>NLP Analiz Sonucu</Text>
+          </View>
+
+          <Text style={styles.fieldLabel}>Tespit Edilen Sözleşme Tipi</Text>
+          <View style={styles.contractTypeBox}>
+            <Text style={styles.contractTypeText}>{getTypeLabel()}</Text>
+          </View>
+
+          {entityRows.length > 0 && (
+            <>
+              <Text style={[styles.fieldLabel, { marginTop: 16 }]}>Çıkarılan Bilgiler (NER)</Text>
+              {entityRows.map((row, i) => (
+                <View
+                  key={i}
+                  style={[styles.entityRow, i < entityRows.length - 1 && styles.entityRowBorder]}
+                >
+                  <Text style={styles.entityLabel}>{row.label}</Text>
+                  <Text style={styles.entityValue}>{row.value}</Text>
+                </View>
+              ))}
+            </>
+          )}
+
+          {(matched.length > 0 || missingRequired.length > 0) && (
+            <>
+              <View style={[styles.sectionHeader, { marginTop: 16 }]}>
+                <Ionicons name="flash" size={14} color={colors.accent} />
+                <Text style={styles.subsectionTitle}>Zorunlu Maddeler</Text>
+              </View>
+              {matched.map((field, i) => (
+                <View key={i} style={styles.mandatoryItem}>
+                  <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                  <Text style={styles.mandatoryName}>{field.name || field.field_name}</Text>
+                </View>
+              ))}
+              {missingRequired.map((field, i) => (
+                <View key={i} style={[styles.mandatoryItem, styles.mandatoryItemMissing]}>
+                  <Ionicons name="alert-circle" size={16} color={colors.error} />
+                  <Text style={[styles.mandatoryName, { color: colors.error }]}>
+                    {field.name || field.field_name}
+                  </Text>
+                </View>
+              ))}
+            </>
+          )}
         </Card>
 
-        {/* Tespit Edilen Alanlar */}
-        {matched.length > 0 && (
-          <Card style={styles.analysisCard}>
-            <Text style={styles.sectionLabel}>Tespit Edilen Bilgiler</Text>
-            {matched.map((field, i) => (
-              <View key={i} style={styles.fieldRow}>
-                <Ionicons name="checkmark-circle" size={18} color={colors.success} />
-                <Text style={styles.fieldText}>{field.name || field.field_name}</Text>
-              </View>
-            ))}
-          </Card>
-        )}
-
-        {/* Eksik Zorunlu Alanlar */}
-        {missingRequired.length > 0 && (
-          <Card style={styles.analysisCard}>
-            <Text style={styles.sectionLabel}>Eksik Zorunlu Bilgiler</Text>
-            {missingRequired.map((field, i) => (
-              <View key={i} style={styles.fieldRow}>
-                <Ionicons name="alert-circle" size={18} color={colors.error} />
-                <Text style={styles.fieldTextMissing}>{field.name || field.field_name}</Text>
-              </View>
-            ))}
-          </Card>
-        )}
-
-        {/* Öneriler - Seçilebilir */}
+        {/* Önerilen Maddeler */}
         {suggestions.length > 0 && (
-          <Card style={styles.analysisCard}>
-            <Text style={styles.sectionLabel}>Öneriler</Text>
-            <Text style={styles.suggestionHint}>Eklemek istediklerinizi seçin:</Text>
-            {suggestions.map((suggestion, index) => (
-              <TouchableOpacity
-                key={index}
-                style={[
-                  styles.suggestionItem,
-                  selectedSuggestions[index] && styles.suggestionItemSelected,
-                ]}
-                onPress={() => toggleSuggestion(index)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.suggestionHeader}>
-                  <Ionicons
-                    name={selectedSuggestions[index] ? 'checkbox' : 'square-outline'}
-                    size={22}
-                    color={selectedSuggestions[index] ? colors.accent : colors.textMuted}
-                  />
-                  <View style={styles.suggestionInfo}>
-                    <Text style={styles.suggestionField}>{suggestion.field_name}</Text>
-                    <Text style={styles.suggestionMessage}>{suggestion.message}</Text>
+          <Card style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="bulb-outline" size={19} color={colors.accent} />
+              <Text style={styles.sectionTitle}>Önerilen Maddeler</Text>
+            </View>
+            <Text style={styles.stepDescription}>
+              GraphRAG bilgi grafiği analizi sonucu önerilen maddeler. Eklemek istediklerinizi seçin.
+            </Text>
+            {suggestions.map((suggestion, index) => {
+              const isChecked = !!selectedSuggestions[index];
+              const isRecommended = suggestion.necessity === 'required';
+              return (
+                <TouchableOpacity
+                  key={index}
+                  style={[styles.suggestionItem, isChecked && styles.suggestionItemSelected]}
+                  onPress={() => toggleSuggestion(index)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
+                    {isChecked && <Ionicons name="checkmark" size={11} color="#fff" />}
                   </View>
-                  {suggestion.necessity === 'required' && (
-                    <View style={styles.requiredBadge}>
-                      <Text style={styles.requiredBadgeText}>Zorunlu</Text>
+                  <View style={styles.suggestionInfo}>
+                    <View style={styles.suggestionNameRow}>
+                      <Text style={styles.suggestionField}>{suggestion.field_name}</Text>
+                      {isRecommended && (
+                        <View style={styles.recommendedBadge}>
+                          <Text style={styles.recommendedBadgeText}>Tavsiye Edilen</Text>
+                        </View>
+                      )}
                     </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))}
+                    <Text style={styles.suggestionMessage}>{suggestion.message}</Text>
+                    {suggestion.usage_percent != null && (
+                      <View style={styles.usageRow}>
+                        <Ionicons name="stats-chart-outline" size={12} color={colors.textMuted} />
+                        <Text style={styles.usageText}>
+                          Kullanıcıların %{suggestion.usage_percent}'i ekledi
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </Card>
         )}
 
-        {/* Tekrar analiz */}
         <Button
           title="Tekrar Analiz Et"
           variant="outline"
@@ -281,6 +317,80 @@ export default function CreateContractScreen({ navigation }) {
       </>
     );
   };
+
+  // Step 2: PDF Önizleme
+  const renderStep2 = () => {
+    const clauseCount = getClauseCount();
+    const today = new Date().toLocaleDateString('tr-TR');
+
+    return (
+      <>
+        {/* Sözleşme Bilgileri */}
+        <Card style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Sözleşme Bilgileri</Text>
+          {[
+            { label: 'Tip', value: getTypeLabel() },
+            { label: 'Taraflar', value: '2 kişi' },
+            { label: 'Maddeler', value: clauseCount > 0 ? String(clauseCount) : '-' },
+          ].map((row) => (
+            <View key={row.label} style={styles.infoRow}>
+              <Text style={styles.infoLabel}>{row.label}</Text>
+              <Text style={styles.infoValue}>{row.value}</Text>
+            </View>
+          ))}
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Durum</Text>
+            <View style={styles.statusBadge}>
+              <Text style={styles.statusBadgeText}>Taslak</Text>
+            </View>
+          </View>
+        </Card>
+
+        {/* Sözleşme İçerik Önizlemesi */}
+        <Card style={styles.previewPaper}>
+          <Text style={styles.previewTitle}>{form.title.toUpperCase()}</Text>
+          <Text style={styles.previewMeta}>Tarih: {today}</Text>
+          <View style={styles.previewDivider} />
+          <Text style={styles.previewContent}>{getEnrichedContent()}</Text>
+        </Card>
+
+        {/* Düzenle */}
+        <Button
+          title="Maddeleri Düzenle"
+          variant="outline"
+          fullWidth
+          onPress={() => setCurrentStep(1)}
+          style={{ marginBottom: 4 }}
+        />
+      </>
+    );
+  };
+
+  // Step 3: Onay & İmza
+  const renderStep3 = () => (
+    <Card style={styles.successCard}>
+      <View style={styles.successIconWrap}>
+        <Ionicons name="checkmark-circle" size={56} color={colors.success} />
+      </View>
+      <Text style={styles.successTitle}>Sözleşme Oluşturuldu</Text>
+      <Text style={styles.successDesc}>
+        Sözleşmeniz başarıyla kaydedildi.
+      </Text>
+      <Button
+        title="Sözleşmeleri Görüntüle"
+        variant="outline"
+        fullWidth
+        onPress={() => navigation.navigate('Contracts')}
+        style={{ marginBottom: 12 }}
+      />
+      <Button
+        title="Yeni Sözleşme"
+        variant="accent"
+        fullWidth
+        onPress={handleReset}
+      />
+    </Card>
+  );
 
   const renderStep = () => {
     switch (currentStep) {
@@ -302,161 +412,88 @@ export default function CreateContractScreen({ navigation }) {
               label="Sözleşme Metni"
               value={form.content}
               onChangeText={(v) => updateField('content', v)}
-              placeholder="Sözleşmenizin içeriğini buraya yazın. Örnek: 'Ahmet Yılmaz ile Ayşe Kaya arasında İstanbul Kadıköy'deki daireyi aylık 15.000 TL'ye, 1 yıllığına kiralama sözleşmesi yapılacaktır...'"
+              placeholder="Sözleşmenizin içeriğini buraya yazın..."
               error={errors.content}
               numberOfLines={12}
               maxLength={5000}
             />
           </Card>
         );
-
-      case 1:
-        return renderAnalysisStep();
-
-      case 2:
-        return (
-          <Card>
-            <Text style={styles.stepTitle}>Taraflar</Text>
-            {analysisResult && (
-              <View style={styles.nlpHintBox}>
-                <Ionicons name="sparkles" size={14} color={colors.accent} />
-                <Text style={styles.nlpHintText}>
-                  AI tarafından tespit edilen bilgiler ön dolduruldu. Düzenleyebilirsiniz.
-                </Text>
-              </View>
-            )}
-            <Input
-              label="Karşı Taraf Adı"
-              value={form.counterpartyName}
-              onChangeText={(v) => updateField('counterpartyName', v)}
-              placeholder="Kişi veya kurum adı"
-              error={errors.counterpartyName}
-              icon={<Ionicons name="person-outline" size={20} color={colors.textMuted} />}
-            />
-            <Input
-              label="Karşı Taraf Rolü"
-              value={form.counterpartyRole}
-              onChangeText={(v) => updateField('counterpartyRole', v)}
-              placeholder="Ör: Kiracı, Müşteri, Çalışan"
-              icon={<Ionicons name="briefcase-outline" size={20} color={colors.textMuted} />}
-            />
-            <Input
-              label="Tutar (Opsiyonel)"
-              value={form.amount}
-              onChangeText={(v) => updateField('amount', v)}
-              placeholder="Ör: 15000"
-              keyboardType="numeric"
-              icon={<Ionicons name="cash-outline" size={20} color={colors.textMuted} />}
-            />
-          </Card>
-        );
-
-      case 3:
-        return (
-          <Card>
-            <Text style={styles.stepTitle}>Önizleme</Text>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>Başlık:</Text>
-              <Text style={styles.previewValue}>{form.title}</Text>
-            </View>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>Tür:</Text>
-              <Text style={styles.previewValue}>{getTypeLabel()}</Text>
-            </View>
-            {form.amount ? (
-              <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>Tutar:</Text>
-                <Text style={styles.previewValue}>{form.amount}</Text>
-              </View>
-            ) : null}
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>Karşı Taraf:</Text>
-              <Text style={styles.previewValue}>
-                {form.counterpartyName}
-                {form.counterpartyRole ? ` (${form.counterpartyRole})` : ''}
-              </Text>
-            </View>
-            {analysisResult?.completeness_score != null && (
-              <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>Tamamlanma:</Text>
-                <Text style={styles.previewValue}>%{analysisResult.completeness_score}</Text>
-              </View>
-            )}
-            <View style={styles.previewDivider} />
-            <Text style={styles.previewLabel}>İçerik:</Text>
-            <Text style={styles.previewContent}>{getEnrichedContent()}</Text>
-          </Card>
-        );
+      case 1: return renderStep1();
+      case 2: return renderStep2();
+      case 3: return renderStep3();
     }
   };
 
-  const lastStep = TOTAL_STEPS - 1;
-  const isAnalyzing = currentStep === 1 && analyzing;
+  const isAnalyzingStep = currentStep === 1 && analyzing;
+  const isLastStep = currentStep === TOTAL_STEPS - 1;
+  const showSaveButton = currentStep === 2;
 
   return (
     <ScreenWrapper>
-    <KeyboardAvoidingView
-      style={styles.kav}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={styles.kav}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Header
-          title="Yeni Sözleşme"
-          subtitle="Adım adım sözleşme oluşturun"
-        />
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Header title="Yeni Sözleşme" subtitle="Adım adım sözleşme oluşturun" />
+          <StepIndicator currentStep={currentStep} steps={stepLabels} />
 
-        <StepIndicator currentStep={currentStep} steps={stepLabels} />
+          {renderStep()}
 
-        {renderStep()}
-
-        <View style={styles.actions}>
-          {currentStep > 0 && !isAnalyzing && (
-            <Button
-              title="Geri"
-              variant="outline"
-              onPress={handleBack}
-              icon={<Ionicons name="arrow-back" size={18} color={colors.primary} />}
-              style={styles.actionButton}
-            />
+          {!isLastStep && (
+            <View style={styles.actions}>
+              {currentStep > 0 && !isAnalyzingStep && (
+                <Button
+                  title="Geri"
+                  variant="outline"
+                  onPress={handleBack}
+                  icon={<Ionicons name="arrow-back" size={18} color={colors.primary} />}
+                  style={styles.actionButton}
+                />
+              )}
+              {showSaveButton ? (
+                <Button
+                  title="Onaya Gönder"
+                  variant="accent"
+                  onPress={handleSave}
+                  loading={saving}
+                  icon={<Ionicons name="send" size={16} color={colors.textInverse} />}
+                  style={[styles.actionButton, styles.actionButtonRight]}
+                />
+              ) : (
+                <Button
+                  title={currentStep === 0 ? 'Analiz Et' : 'İleri'}
+                  variant="accent"
+                  onPress={handleNext}
+                  loading={isAnalyzingStep}
+                  disabled={isAnalyzingStep}
+                  icon={
+                    currentStep === 0
+                      ? <Ionicons name="sparkles" size={18} color={colors.textInverse} />
+                      : undefined
+                  }
+                  style={[
+                    styles.actionButton,
+                    currentStep > 0 && !isAnalyzingStep && styles.actionButtonRight,
+                  ]}
+                />
+              )}
+            </View>
           )}
-          {currentStep < lastStep ? (
-            <Button
-              title={currentStep === 0 ? 'Analiz Et' : 'İleri'}
-              variant="accent"
-              onPress={handleNext}
-              loading={isAnalyzing}
-              disabled={isAnalyzing}
-              icon={currentStep === 0 ? <Ionicons name="sparkles" size={18} color={colors.textInverse} /> : undefined}
-              style={[styles.actionButton, currentStep > 0 && !isAnalyzing && styles.actionButtonRight]}
-            />
-          ) : (
-            <Button
-              title="Kaydet"
-              variant="success"
-              onPress={handleSave}
-              loading={saving}
-              icon={<Ionicons name="checkmark" size={18} color={colors.textInverse} />}
-              style={[styles.actionButton, styles.actionButtonRight]}
-            />
-          )}
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  kav: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
+  kav: { flex: 1 },
+  scrollContent: { padding: 20, paddingBottom: 40 },
+
   stepTitle: {
     fontFamily: fonts.headingMedium,
     fontSize: 18,
@@ -465,19 +502,174 @@ const styles = StyleSheet.create({
   },
   stepDescription: {
     fontFamily: fonts.body,
-    fontSize: 14,
+    fontSize: 13,
     color: colors.textSecondary,
-    marginBottom: 20,
-    lineHeight: 21,
+    marginBottom: 16,
+    lineHeight: 20,
   },
-  // Analysis step
-  analysisCard: {
+
+  // Section cards
+  sectionCard: { marginBottom: 14 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 14,
   },
-  analyzingContainer: {
-    alignItems: 'center',
-    paddingVertical: 40,
+  sectionTitle: {
+    fontFamily: fonts.headingMedium,
+    fontSize: 16,
+    color: colors.text,
   },
+  subsectionTitle: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 13,
+    color: colors.text,
+  },
+
+  // Contract type box
+  fieldLabel: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginBottom: 8,
+  },
+  contractTypeBox: {
+    backgroundColor: 'rgba(200, 150, 62, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(200, 150, 62, 0.2)',
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  contractTypeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 15,
+    color: colors.text,
+  },
+
+  // NER entity rows
+  entityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  entityRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  entityLabel: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  entityValue: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: colors.text,
+    textAlign: 'right',
+  },
+
+  // Mandatory clauses
+  mandatoryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.successBg,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 8,
+  },
+  mandatoryItemMissing: {
+    backgroundColor: colors.errorBg,
+  },
+  mandatoryName: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 13,
+    color: colors.text,
+    flex: 1,
+  },
+
+  // Suggestion items
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: colors.surface,
+  },
+  suggestionItemSelected: {
+    borderColor: colors.primary,
+    backgroundColor: 'rgba(27, 42, 74, 0.04)',
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  checkboxChecked: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  suggestionInfo: { flex: 1 },
+  suggestionNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 3,
+    flexWrap: 'wrap',
+  },
+  suggestionField: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 14,
+    color: colors.text,
+  },
+  suggestionMessage: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 19,
+  },
+  usageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 6,
+  },
+  usageText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  recommendedBadge: {
+    backgroundColor: colors.warningBg,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+  },
+  recommendedBadgeText: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 11,
+    color: colors.warning,
+  },
+
+  reanalyzeButton: { marginTop: 4 },
+
+  // Analyzing state
+  analyzingContainer: { alignItems: 'center', paddingVertical: 40 },
   analyzingText: {
     fontFamily: fonts.bodySemiBold,
     fontSize: 16,
@@ -490,148 +682,96 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 4,
   },
-  analyzeDescription: {
-    fontFamily: fonts.body,
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: 20,
-    lineHeight: 21,
+
+  // Step 2: PDF Önizleme
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
-  detectedType: {
+  infoLabel: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+  infoValue: {
     fontFamily: fonts.bodyMedium,
     fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  sectionLabel: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 15,
-    color: colors.text,
-    marginBottom: 12,
-  },
-  fieldRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
-  },
-  fieldText: {
-    fontFamily: fonts.body,
-    fontSize: 14,
     color: colors.text,
   },
-  fieldTextMissing: {
-    fontFamily: fonts.body,
-    fontSize: 14,
-    color: colors.error,
-  },
-  suggestionHint: {
-    fontFamily: fonts.body,
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginBottom: 12,
-  },
-  suggestionItem: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: 14,
-    marginBottom: 10,
-    backgroundColor: colors.surface,
-  },
-  suggestionItemSelected: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentMuted,
-  },
-  suggestionHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  suggestionInfo: {
-    flex: 1,
-  },
-  suggestionField: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 14,
-    color: colors.text,
-  },
-  suggestionMessage: {
-    fontFamily: fonts.body,
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 3,
-    lineHeight: 19,
-  },
-  requiredBadge: {
-    backgroundColor: colors.errorBg,
-    paddingHorizontal: 8,
+  statusBadge: {
+    backgroundColor: colors.warningBg,
+    paddingHorizontal: 10,
     paddingVertical: 3,
-    borderRadius: radius.sm,
+    borderRadius: radius.full,
   },
-  requiredBadgeText: {
+  statusBadgeText: {
     fontFamily: fonts.bodySemiBold,
-    fontSize: 11,
-    color: colors.error,
+    fontSize: 12,
+    color: colors.warning,
   },
-  reanalyzeButton: {
-    marginTop: 4,
+  previewPaper: {
+    marginBottom: 14,
+    backgroundColor: colors.card,
   },
-  // NLP hint
-  nlpHintBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.accentMuted,
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 16,
+  previewTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: 4,
   },
-  nlpHintText: {
+  previewMeta: {
     fontFamily: fonts.body,
     fontSize: 12,
-    color: colors.accent,
-    flex: 1,
-  },
-  // Preview
-  previewRow: {
-    flexDirection: 'row',
-    marginBottom: 12,
-  },
-  previewLabel: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 14,
-    color: colors.textSecondary,
-    width: 100,
-  },
-  previewValue: {
-    fontFamily: fonts.body,
-    fontSize: 14,
-    color: colors.text,
-    flex: 1,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: 14,
   },
   previewDivider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.border,
-    marginVertical: 16,
+    marginBottom: 14,
   },
   previewContent: {
     fontFamily: fonts.body,
-    fontSize: 14,
+    fontSize: 13,
     color: colors.text,
-    lineHeight: 22,
-    marginTop: 8,
+    lineHeight: 21,
   },
+
+  // Step 3: Success
+  successCard: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 24,
+  },
+  successIconWrap: { marginBottom: 16 },
+  successTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 20,
+    color: colors.text,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  successDesc: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 28,
+    lineHeight: 21,
+  },
+
+  // Actions
   actions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 24,
   },
-  actionButton: {
-    flex: 1,
-  },
-  actionButtonRight: {
-    marginLeft: 12,
-  },
+  actionButton: { flex: 1 },
+  actionButtonRight: { marginLeft: 12 },
 });
