@@ -21,6 +21,7 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { colors, fonts } from './src/styles/tokens';
 import authService from './src/services/auth.service';
+import { setOnUnauthorized } from './src/services/api.service';
 import DisclaimerModal, { checkDisclaimerAccepted } from './src/components/DisclaimerModal';
 
 import LoginScreen from './src/screens/LoginScreen';
@@ -154,6 +155,8 @@ export default function App() {
   });
 
   useEffect(() => {
+    // 401 aldığında token temizlenmiş olur; buradan da state'i false'a çekeriz → Login ekranı
+    setOnUnauthorized(() => setIsAuthenticated(false));
     checkAuth();
   }, []);
 

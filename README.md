@@ -293,6 +293,7 @@ await api.get('/api/verification/status');
 - [x] `checkDisclaimerAccepted()` — Async yardimci fonksiyon (SecureStore + backend)
 - [x] `App.js` — `showDisclaimer` state + DisclaimerModal entegrasyonu
 - [x] Auth sonrasi disclaimer kontrolu
+- [x] `api.service.js` — Global 401 handler: token temizleme + otomatik Login yonlendirme
 
 ---
 
@@ -316,6 +317,15 @@ Kullanici basarili giris yaptiktan sonra modal olarak gosterilir.
 > "Bu platformda verilen hukuki tavsiyeler yanıltıcı olabilir ve bir avukata danışmanız şiddetle tavsiye edilir."
 
 Sozlesme `finalize` isleminde backend bu kaydı zorunlu tutar — kabul edilmeden sozlesme sonuclandirilamaz.
+
+## Oturum Suresi Dolunca Otomatik Cikis
+
+`api.service.js` herhangi bir endpoint'ten `401` aldiginda:
+1. SecureStore'dan `authToken` ve `user` silinir
+2. `App.js`'te register edilen `_onUnauthorized` callback'i cagirilir
+3. `isAuthenticated = false` → `Stack.Navigator` otomatik olarak Login ekranini gosterir
+
+Bu sayede eski/suresi dolmus token ile uygulamaya girilse bile kullanici otomatik olarak Login ekranina yonlendirilir.
 
 ---
 
