@@ -288,6 +288,35 @@ await api.get('/api/verification/status');
 ### Week 9 — Chatbot
 - [ ] Chatbot UI entegrasyonu
 
+### Week 10 — Yasal Uyari & Guvenlik (Mevcut)
+- [x] `DisclaimerModal.js` — Yasal uyari modal bileseni (React Native Modal)
+- [x] `checkDisclaimerAccepted()` — Async yardimci fonksiyon (SecureStore + backend)
+- [x] `App.js` — `showDisclaimer` state + DisclaimerModal entegrasyonu
+- [x] Auth sonrasi disclaimer kontrolu
+
+---
+
+## Disclaimer (Yasal Uyari) Bileseni
+
+`src/components/DisclaimerModal.js`
+
+Kullanici basarili giris yaptiktan sonra modal olarak gosterilir.
+
+**Akis:**
+1. `App.js` `checkAuth()` fonksiyonu — kullanici dogrulandi
+2. `checkDisclaimerAccepted()` cagirilir:
+   - Once `SecureStore.getItemAsync('disclaimer_accepted_v1.0')` kontrolu
+   - Yoksa `GET /api/disclaimer/status` backend kontrolu
+3. Kabul edilmemisse `showDisclaimer = true` → `<DisclaimerModal visible={true} />` gosterilir
+4. Ekran geri tusuna basilamaz (`onRequestClose` devre disi)
+5. "Anladim ve Kabul Ediyorum" tiklaninca `POST /api/disclaimer/accept` cagirilir, `platform: 'MOBILE'` gonderilir
+6. SecureStore'a kaydedilir, modal kapanir
+
+**Uyari metni:**
+> "Bu platformda verilen hukuki tavsiyeler yanıltıcı olabilir ve bir avukata danışmanız şiddetle tavsiye edilir."
+
+Sozlesme `finalize` isleminde backend bu kaydı zorunlu tutar — kabul edilmeden sozlesme sonuclandirilamaz.
+
 ---
 
 ## Takım
