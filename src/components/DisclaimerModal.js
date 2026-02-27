@@ -23,13 +23,12 @@ const DisclaimerModal = ({ visible, onAccepted }) => {
     setError(null);
     try {
       await api.post('/api/disclaimer/accept', { platform: 'MOBILE' });
-      await SecureStore.setItemAsync(STORAGE_KEY, '1');
-      onAccepted && onAccepted();
     } catch {
-      setError('Bir hata oluştu. Lütfen tekrar deneyin.');
-    } finally {
-      setLoading(false);
+      // Backend ulaşılamaz olsa da kullanıcı metni gördü — yerel olarak kaydet ve devam et
     }
+    await SecureStore.setItemAsync(STORAGE_KEY, '1');
+    onAccepted && onAccepted();
+    setLoading(false);
   };
 
   return (
