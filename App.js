@@ -21,6 +21,7 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { colors, fonts } from './src/styles/tokens';
 import authService from './src/services/auth.service';
+import DisclaimerModal, { checkDisclaimerAccepted } from './src/components/DisclaimerModal';
 
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
@@ -141,6 +142,7 @@ function MainTabs() {
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(null);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
 
   const [fontsLoaded] = useFonts({
     PlayfairDisplay_600SemiBold,
@@ -158,6 +160,10 @@ export default function App() {
   const checkAuth = async () => {
     const authenticated = await authService.isAuthenticated();
     setIsAuthenticated(authenticated);
+    if (authenticated) {
+      const accepted = await checkDisclaimerAccepted();
+      if (!accepted) setShowDisclaimer(true);
+    }
   };
 
   const onLayoutRootView = useCallback(async () => {
@@ -178,6 +184,10 @@ export default function App() {
     <SafeAreaProvider>
       <View style={styles.container} onLayout={onLayoutRootView}>
         <StatusBar style="dark" />
+        <DisclaimerModal
+          visible={showDisclaimer}
+          onAccepted={() => setShowDisclaimer(false)}
+        />
         <NavigationContainer
           onStateChange={async () => {
             const auth = await authService.isAuthenticated();
