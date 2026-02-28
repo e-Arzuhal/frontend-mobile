@@ -1,6 +1,10 @@
 import { API_BASE_URL, API_TIMEOUT } from '../config/api.config';
 import * as SecureStore from 'expo-secure-store';
 
+// 401 aldığında çağrılacak global callback — App.js tarafından register edilir
+let _onUnauthorized = null;
+export const setOnUnauthorized = (cb) => { _onUnauthorized = cb; };
+
 class ApiService {
   constructor() {
     this.baseUrl = API_BASE_URL;
@@ -19,6 +23,15 @@ class ApiService {
     try {
       const response = await fetch(url, { ...options, headers, signal: controller.signal });
       clearTimeout(timeoutId);
+
+      // Token süresi dolmuş veya geçersiz → oturumu temizle, login'e yönlendir
+      if (response.status === 401) {
+        await SecureStore.deleteItemAsync('authToken');
+        await SecureStore.deleteItemAsync('user');
+        if (_onUnauthorized) _onUnauthorized();
+        throw new Error('Oturum süresi doldu. Lütfen tekrar giriş yapın.');
+      }
+
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
       return data;
