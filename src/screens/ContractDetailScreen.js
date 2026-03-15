@@ -15,6 +15,7 @@ import Badge from '../components/Badge';
 import Button from '../components/Button';
 import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
+import verificationService from '../services/verification.service';
 
 const typeLabels = {
   SALES: 'Satış Sözleşmesi',
@@ -59,28 +60,59 @@ export default function ContractDetailScreen({ route, navigation }) {
     }
   };
 
-  const handleFinalize = () => {
+  const handleFinalize = async () => {
+    // Verification gate: check if user is verified before finalizing
+    setActionLoading(true);
+    try {
+      const verified = await verificationService.isVerified();
+      if (!verified) {
+        setActionLoading(false);
+        Alert.alert(
+          'Kimlik Doğrulaması Gerekli',
+          'Sözleşmeyi onaya göndermek için kimlik doğrulaması yapmanız gerekiyor. Kimlik doğrulama ekranına yönlendirileceksiniz.',
+          [
+            { text: 'İptal', style: 'cancel' },
+            {
+              text: 'Doğrulamaya Git',
+              onPress: () => {
+                navigation.navigate('Settings', {
+                  screen: 'Verification',
+                  params: {
+                    contractGate: true,
+                    onVerified: () => performFinalize(),
+                  },
+                });
+              },
+            },
+          ]
+        );
+        return;
+      }
+    } catch {
+      // If status check fails, still allow finalize (backend will enforce)
+    }
+    setActionLoading(false);
+
     Alert.alert(
       'Onaya Gönder',
       'Bu sözleşmeyi onaya göndermek istediğinize emin misiniz?',
       [
         { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Gönder',
-          onPress: async () => {
-            setActionLoading(true);
-            try {
-              await contractService.finalize(contractId);
-              loadContract();
-            } catch (error) {
-              Alert.alert('Hata', error.message || 'İşlem başarısız.');
-            } finally {
-              setActionLoading(false);
-            }
-          },
-        },
+        { text: 'Gönder', onPress: () => performFinalize() },
       ]
     );
+  };
+
+  const performFinalize = async () => {
+    setActionLoading(true);
+    try {
+      await contractService.finalize(contractId);
+      loadContract();
+    } catch (error) {
+      Alert.alert('Hata', error.message || 'İşlem başarısız.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleDelete = () => {
