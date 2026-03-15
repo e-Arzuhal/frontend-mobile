@@ -13,7 +13,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NFCReaderUsageDescription": "TC Kimlik Kartınızı NFC ile okumak için gereklidir.",
+        "com.apple.developer.nfc.readersession.iso7816.select-identifiers": ["A0000002471001"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -27,7 +31,21 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "TC Kimlik Kartınızı taramak için kamera erişimi gereklidir."
+        }
+      ],
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "TC Kimlik Kartınızı okumak için NFC gereklidir.",
+          "selectIdentifiers": ["A0000002471001"],
+          "systemCodes": []
+        }
+      ]
     ]
   }
 }

@@ -17,6 +17,8 @@ import Badge from '../components/Badge';
 import Button from '../components/Button';
 import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
+import verificationService from '../services/verification.service';
+import { useNavigation } from '@react-navigation/native';
 
 const typeLabels = {
   SALES: 'Satış',
@@ -34,6 +36,7 @@ const formatDate = (dateStr) => {
 };
 
 export default function ApprovalsScreen() {
+  const navigation = useNavigation();
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,45 +65,77 @@ export default function ApprovalsScreen() {
     loadApprovals();
   };
 
+  const requireVerification = async (actionLabel, onConfirmed) => {
+    try {
+      const verified = await verificationService.isVerified();
+      if (!verified) {
+        Alert.alert(
+          'Kimlik Doğrulaması Gerekli',
+          `Sözleşmeyi ${actionLabel} için kimlik doğrulaması yapmanız gerekiyor.`,
+          [
+            { text: 'İptal', style: 'cancel' },
+            {
+              text: 'Doğrulamaya Git',
+              onPress: () => {
+                navigation.navigate('Settings', {
+                  screen: 'Verification',
+                  params: { contractGate: true },
+                });
+              },
+            },
+          ]
+        );
+        return;
+      }
+    } catch {
+      // If check fails, proceed (backend will enforce)
+    }
+    onConfirmed();
+  };
+
   const handleApprove = (id) => {
-    Alert.alert('Onayla', 'Bu sözleşmeyi onaylamak istediğinize emin misiniz?', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Onayla',
-        onPress: async () => {
-          setActionLoadingId(id);
-          try {
-            await contractService.approve(id);
-            setApprovals((prev) => prev.filter((a) => a.id !== id));
-          } catch (error) {
-            Alert.alert('Hata', error.message || 'Onaylama başarısız.');
-          } finally {
-            setActionLoadingId(null);
-          }
+    requireVerification('onaylamak', () => {
+      Alert.alert('Onayla', 'Bu sözleşmeyi onaylamak istediğinize emin misiniz?', [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Onayla',
+          onPress: async () => {
+            setActionLoadingId(id);
+            try {
+              await contractService.approve(id);
+              setApprovals((prev) => prev.filter((a) => a.id !== id));
+            } catch (error) {
+              Alert.alert('Hata', error.message || 'Onaylama başarısız.');
+            } finally {
+              setActionLoadingId(null);
+            }
+          },
         },
-      },
-    ]);
+      ]);
+    });
   };
 
   const handleReject = (id) => {
-    Alert.alert('Reddet', 'Bu sözleşmeyi reddetmek istediğinize emin misiniz?', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Reddet',
-        style: 'destructive',
-        onPress: async () => {
-          setActionLoadingId(id);
-          try {
-            await contractService.reject(id);
-            setApprovals((prev) => prev.filter((a) => a.id !== id));
-          } catch (error) {
-            Alert.alert('Hata', error.message || 'Reddetme başarısız.');
-          } finally {
-            setActionLoadingId(null);
-          }
+    requireVerification('reddetmek', () => {
+      Alert.alert('Reddet', 'Bu sözleşmeyi reddetmek istediğinize emin misiniz?', [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Reddet',
+          style: 'destructive',
+          onPress: async () => {
+            setActionLoadingId(id);
+            try {
+              await contractService.reject(id);
+              setApprovals((prev) => prev.filter((a) => a.id !== id));
+            } catch (error) {
+              Alert.alert('Hata', error.message || 'Reddetme başarısız.');
+            } finally {
+              setActionLoadingId(null);
+            }
+          },
         },
-      },
-    ]);
+      ]);
+    });
   };
 
   const renderApproval = ({ item }) => {
