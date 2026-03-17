@@ -11,6 +11,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import * as SecureStore from 'expo-secure-store';
 import { colors, fonts, radius, shadows } from '../styles/tokens';
 import Header from '../components/Header';
 import Card from '../components/Card';
@@ -20,6 +23,7 @@ import Button from '../components/Button';
 import StepIndicator from '../components/StepIndicator';
 import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
+import { API_BASE_URL } from '../config/api.config';
 
 const TOTAL_STEPS = 4;
 const stepLabels = ['Metin Girişi', 'Sözleşme Önerisi', 'PDF Önizleme', 'Onay & İmza'];
@@ -54,6 +58,8 @@ const ENTITY_LABELS = {
 export default function CreateContractScreen({ navigation }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [savedContractId, setSavedContractId] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [form, setForm] = useState({
     title: '',
     type: '',
@@ -61,7 +67,10 @@ export default function CreateContractScreen({ navigation }) {
     amount: '',
     counterpartyName: '',
     counterpartyRole: '',
+    counterpartyTcKimlik: '',
   });
+  const [tcLookupResult, setTcLookupResult] = useState(null);
+  const [tcLooking, setTcLooking] = useState(false);
   const [errors, setErrors] = useState({});
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
@@ -143,7 +152,8 @@ export default function CreateContractScreen({ navigation }) {
     setSaving(true);
     try {
       const enrichedContent = getEnrichedContent();
-      await contractService.create({ ...form, content: enrichedContent });
+      const saved = await contractService.create({ ...form, content: enrichedContent });
+      setSavedContractId(saved?.id || null);
       setCurrentStep(3);
     } catch (error) {
       Alert.alert('Hata', error.message || 'Sözleşme oluşturulamadı.');
@@ -152,12 +162,48 @@ export default function CreateContractScreen({ navigation }) {
     }
   };
 
+  const handleViewPdf = async () => {
+    if (!savedContractId) return;
+    setPdfLoading(true);
+    try {
+      const token = await SecureStore.getItemAsync('authToken');
+      const pdfUrl = `${API_BASE_URL}/api/contracts/${savedContractId}/pdf`;
+      const localPath = `${FileSystem.cacheDirectory}sozlesme_${savedContractId}.pdf`;
+      await FileSystem.downloadAsync(pdfUrl, localPath, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await Sharing.shareAsync(localPath, { mimeType: 'application/pdf', dialogTitle: 'PDF Görüntüle' });
+    } catch (e) {
+      Alert.alert('Hata', 'PDF açılamadı: ' + (e.message || 'Bilinmeyen hata'));
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handleTcKimlikChange = async (value) => {
+    updateField('counterpartyTcKimlik', value);
+    setTcLookupResult(null);
+    if (value.length === 11) {
+      setTcLooking(true);
+      try {
+        const result = await contractService.lookupUserByTc(value);
+        setTcLookupResult(result);
+      } catch {
+        setTcLookupResult({ found: false });
+      } finally {
+        setTcLooking(false);
+      }
+    }
+  };
+
   const handleReset = () => {
     setCurrentStep(0);
-    setForm({ title: '', type: '', content: '', amount: '', counterpartyName: '', counterpartyRole: '' });
+    setForm({ title: '', type: '', content: '', amount: '', counterpartyName: '', counterpartyRole: '', counterpartyTcKimlik: '' });
     setErrors({});
     setAnalysisResult(null);
     setSelectedSuggestions({});
+    setSavedContractId(null);
+    setTcLookupResult(null);
   };
 
   // Step 1: Sözleşme Önerisi
@@ -376,6 +422,17 @@ export default function CreateContractScreen({ navigation }) {
       <Text style={styles.successDesc}>
         Sözleşmeniz başarıyla kaydedildi.
       </Text>
+      {savedContractId && (
+        <Button
+          title={pdfLoading ? 'PDF Hazırlanıyor...' : 'PDF Görüntüle / İndir'}
+          variant="accent"
+          fullWidth
+          loading={pdfLoading}
+          onPress={handleViewPdf}
+          icon={<Ionicons name="document-text-outline" size={18} color={colors.textInverse} />}
+          style={{ marginBottom: 12 }}
+        />
+      )}
       <Button
         title="Sözleşmeleri Görüntüle"
         variant="outline"
@@ -417,6 +474,34 @@ export default function CreateContractScreen({ navigation }) {
               numberOfLines={12}
               maxLength={5000}
             />
+            <Input
+              label="Karşı Taraf TC Kimlik No (Opsiyonel)"
+              value={form.counterpartyTcKimlik}
+              onChangeText={handleTcKimlikChange}
+              placeholder="11 haneli TC Kimlik Numarası"
+              keyboardType="numeric"
+              maxLength={11}
+            />
+            {tcLooking && (
+              <View style={styles.tcLookupRow}>
+                <ActivityIndicator size="small" color={colors.accent} />
+                <Text style={styles.tcLookupText}>Kullanıcı aranıyor...</Text>
+              </View>
+            )}
+            {tcLookupResult && (
+              <View style={[styles.tcLookupRow, tcLookupResult.found ? styles.tcFound : styles.tcNotFound]}>
+                <Ionicons
+                  name={tcLookupResult.found ? 'checkmark-circle' : 'warning'}
+                  size={16}
+                  color={tcLookupResult.found ? colors.success : colors.warning}
+                />
+                <Text style={[styles.tcLookupText, { color: tcLookupResult.found ? colors.success : colors.warning }]}>
+                  {tcLookupResult.found
+                    ? `Kullanıcı bulundu: ${tcLookupResult.displayName}`
+                    : 'Bu TC Kimlik No\'ya ait kayıtlı kullanıcı bulunamadı. Onay gönderilemeyecek, ancak sözleşmeyi oluşturabilirsiniz.'}
+                </Text>
+              </View>
+            )}
           </Card>
         );
       case 1: return renderStep1();
@@ -493,6 +578,24 @@ export default function CreateContractScreen({ navigation }) {
 const styles = StyleSheet.create({
   kav: { flex: 1 },
   scrollContent: { padding: 20, paddingBottom: 40 },
+
+  tcLookupRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 6,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.03)',
+  },
+  tcFound: { backgroundColor: 'rgba(34,197,94,0.08)' },
+  tcNotFound: { backgroundColor: 'rgba(245,158,11,0.08)' },
+  tcLookupText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
 
   stepTitle: {
     fontFamily: fonts.headingMedium,

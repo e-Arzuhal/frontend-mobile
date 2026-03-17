@@ -202,7 +202,9 @@ export default function App() {
               <Stack.Screen name="Main" component={MainTabs} />
             ) : (
               <>
-                <Stack.Screen name="Login" component={LoginScreen} />
+                <Stack.Screen name="Login">
+                  {(props) => <LoginScreen {...props} onLoginSuccess={() => setIsAuthenticated(true)} />}
+                </Stack.Screen>
                 <Stack.Screen name="Register" component={RegisterScreen} />
               </>
             )}

@@ -128,7 +128,7 @@ export default function DashboardScreen({ navigation }) {
         contracts.map((contract) => (
           <TouchableOpacity
             key={contract.id}
-            onPress={() => navigation.navigate('ContractDetail', { contractId: contract.id })}
+            onPress={() => navigation.navigate('Contracts', { screen: 'ContractDetail', params: { contractId: contract.id } })}
           >
             <Card style={styles.contractCard}>
               <View style={styles.contractRow}>

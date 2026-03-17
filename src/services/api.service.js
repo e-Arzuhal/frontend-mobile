@@ -32,7 +32,9 @@ class ApiService {
         throw new Error('Oturum süresi doldu. Lütfen tekrar giriş yapın.');
       }
 
-      const data = await response.json();
+      const contentType = response.headers.get('content-type');
+      const hasBody = response.status !== 204 && contentType?.includes('application/json');
+      const data = hasBody ? await response.json() : {};
       if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
       return data;
     } catch (error) {
