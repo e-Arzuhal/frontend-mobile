@@ -14,7 +14,7 @@ import { colors, fonts, radius, shadows } from '../styles/tokens';
 import Input from '../components/Input';
 import Button from '../components/Button';
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, onLoginSuccess }) {
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -34,6 +34,7 @@ export default function LoginScreen({ navigation }) {
     try {
       const authService = require('../services/auth.service').default;
       await authService.login(usernameOrEmail, password);
+      onLoginSuccess && onLoginSuccess();
     } catch (error) {
       Alert.alert('Giriş Hatası', error.message || 'Giriş yapılamadı.');
     } finally {
