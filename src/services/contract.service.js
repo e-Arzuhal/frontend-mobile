@@ -3,6 +3,7 @@ import api from './api.service';
 const contractService = {
   analyze: (text) => api.post('/api/analysis/analyze', { text }),
   create: (data) => api.post('/api/contracts', data),
+  lookupUserByTc: (tcKimlik) => api.get('/api/users/lookup', { tcKimlik }),
   getAll: (params) => api.get('/api/contracts', params),
   getById: (id) => api.get(`/api/contracts/${id}`),
   update: (id, data) => api.put(`/api/contracts/${id}`, data),

@@ -4,7 +4,7 @@ e-Arzuhal Akıllı Sözleşme Sistemi — React Native / Expo Mobil Uygulaması
 
 ---
 
-## Teknoloji Stack
+## Tech Stack
 
 | Katman | Teknoloji |
 |--------|-----------|
@@ -13,6 +13,7 @@ e-Arzuhal Akıllı Sözleşme Sistemi — React Native / Expo Mobil Uygulaması
 | Navigation | React Navigation 7 (Stack + Bottom Tabs) |
 | Font | DM Sans + Playfair Display (Google Fonts) |
 | Güvenli Depolama | expo-secure-store |
+| PDF İndirme | expo-file-system + expo-sharing |
 | NFC Okuma | react-native-nfc-manager 3.x |
 
 ---
@@ -21,40 +22,33 @@ e-Arzuhal Akıllı Sözleşme Sistemi — React Native / Expo Mobil Uygulaması
 
 ```
 frontend-mobile/
-├── App.js                        # Navigation container + auth state
-├── package.json
-├── app.json                      # Expo config
+├── App.js                        # Navigation + auth state + disclaimer kontrolü
 ├── src/
-│   ├── components/               # Yeniden kullanılabilir bileşenler
+│   ├── components/
 │   │   ├── Button.js
 │   │   ├── Card.js
-│   │   ├── Badge.js
-│   │   ├── Header.js
 │   │   ├── Input.js
-│   │   ├── ProgressBar.js
-│   │   ├── ScreenWrapper.js      # Safe area + arka plan sarmalayıcı
-│   │   ├── StepIndicator.js
-│   │   └── TextArea.js
-│   ├── screens/                  # Ekranlar
-│   │   ├── LoginScreen.js
+│   │   ├── ScreenWrapper.js
+│   │   ├── DisclaimerModal.js    # Yasal uyarı modal
+│   │   └── ...
+│   ├── screens/
+│   │   ├── LoginScreen.js        # onLoginSuccess callback ile auth state güncelleme
 │   │   ├── RegisterScreen.js
-│   │   ├── DashboardScreen.js
-│   │   ├── CreateContractScreen.js
+│   │   ├── DashboardScreen.js    # Nested navigation ile ContractDetail geçişi
+│   │   ├── CreateContractScreen.js  # TC Kimlik lookup + PDF indirme
 │   │   ├── ContractsScreen.js
 │   │   ├── ContractDetailScreen.js
 │   │   ├── ApprovalsScreen.js
-│   │   ├── SettingsScreen.js     # Kimlik Doğrulama navigasyonu içerir
-│   │   └── VerificationScreen.js # NFC + Manuel TC kimlik doğrulama
+│   │   ├── SettingsScreen.js
+│   │   ├── VerificationScreen.js # NFC + Manuel kimlik doğrulama
+│   │   └── ChatbotScreen.js
 │   ├── services/
-│   │   ├── api.service.js        # JWT-aware HTTP wrapper
+│   │   ├── api.service.js        # JWT wrapper + 204 guard + 401 global handler
 │   │   ├── auth.service.js
-│   │   └── contract.service.js
-│   ├── config/
-│   │   └── api.config.js
-│   └── styles/
-│       └── tokens.js             # Design tokens (renkler, fontlar, spacing)
+│   │   └── contract.service.js   # lookupUserByTc dahil
+│   ├── config/api.config.js
+│   └── styles/tokens.js
 └── assets/
-    └── (görseller, ikonlar)
 ```
 
 ---
@@ -69,7 +63,7 @@ npx expo start
 
 - Android: `npx expo start --android`
 - iOS: `npx expo start --ios` (macOS + Xcode gerekli)
-- Expo Go: QR kodu ile test (**NFC özelliği Expo Go'da çalışmaz**, EAS Build gerekir)
+- Expo Go: QR ile test (**NFC Expo Go'da çalışmaz**, EAS Build gerekir)
 
 ---
 
@@ -77,260 +71,102 @@ npx expo start
 
 ```
 Stack.Navigator
-├── Login  (unauthenticated)
-├── Register  (unauthenticated)
-└── Main → Tab.Navigator  (authenticated)
-    ├── Dashboard
-    ├── CreateContract
+├── Login     (onLoginSuccess → setIsAuthenticated(true))
+├── Register
+└── Main → Tab.Navigator
+    ├── Dashboard          (ContractDetail için nested path kullanır)
+    ├── CreateContract     (TC Kimlik lookup + PDF indirme)
     ├── Contracts → ContractsStack
     │   ├── ContractsList
     │   └── ContractDetail
     ├── Approvals
+    ├── Chatbot
     └── Settings → SettingsStack
-        ├── SettingsHome        # Güvenlik tabı → "Kimlik Doğrulama" satırı
-        └── Verification        # NFC + Manuel kimlik doğrulama ekranı
+        ├── SettingsHome
+        └── Verification
 ```
 
 ---
 
-## ScreenWrapper Kullanımı
+## Önemli Düzeltmeler
 
-`ScreenWrapper` bileşeni tüm ekranları sararak safe area ve arka plan rengini tutarlı uygular.
+### 204 No Content Güvencesi
 
-```jsx
-// Doğru — tüm ekranı sar
-return (
-  <ScreenWrapper>
-    <Header ... />
-    <ScrollView>...</ScrollView>
-  </ScreenWrapper>
-);
+`api.service.js` DELETE yanıtlarında `response.json()` çağrısı öncesi içerik tipi kontrolü yapar.
+204 dönen yanıtlar için boş obje döner, JSON parse hatası oluşmaz.
 
-// Yanlış — liste öğelerini sarma
-const renderItem = ({ item }) => (
-  <ScreenWrapper>  {/* YAPMA */}
-    <Card>{item.title}</Card>
-  </ScreenWrapper>
-);
+### Cross-Tab Navigasyon
+
+Dashboard'dan ContractDetail'e geçiş:
+```js
+navigation.navigate('Contracts', {
+  screen: 'ContractDetail',
+  params: { contractId: contract.id }
+});
+```
+
+### Login Yönlendirme
+
+`LoginScreen` başarılı girişten sonra `onLoginSuccess()` callback'ini çağırır.
+`App.js` bu callback ile `isAuthenticated = true` yapar → ana ekran otomatik açılır.
+
+---
+
+## Sözleşme Oluşturma — TC Kimlik Lookup
+
+`CreateContractScreen` adım 0'da karşı tarafın TC Kimlik No'su istenir.
+11 hane girildiğinde otomatik `GET /api/users/lookup?tcKimlik=` çağrılır:
+
+```js
+// Kullanıcı bulunduysa:
+// ✅ Karşı taraf bulundu: Ahmet Yılmaz
+
+// Bulunamadıysa:
+// ⚠️ Bu TC Kimlik No'ya ait kayıtlı kullanıcı bulunamadı.
+//    Onay gönderilemeyecek, ancak sözleşmeyi yine de oluşturabilirsiniz.
+```
+
+---
+
+## Sözleşme Oluşturma — PDF İndirme
+
+Adım 3 (başarı ekranı) "PDF Görüntüle / İndir" butonu sunar:
+
+```js
+// expo-file-system ile auth header'lı indirme:
+const result = await FileSystem.downloadAsync(pdfUrl, localUri, {
+  headers: { Authorization: `Bearer ${token}` }
+});
+// expo-sharing ile cihazın native paylaşım menüsü açılır:
+await Sharing.shareAsync(result.uri);
 ```
 
 ---
 
 ## VerificationScreen — NFC Kimlik Doğrulama
 
-### Özellikler
+- **NFC Tab**: TC Kimlik Kartı okuma (ICAO 9303 / MRTD, BAC → DG1)
+- **Manuel Tab**: TC No + Ad + Soyad + Doğum Tarihi form doğrulama
+- NFC gerçek cihazda çalışır, Expo Go'da devre dışıdır
 
-- **NFC Tab**: TC Kimlik Kartı NFC çipi okuma (ICAO 9303 / MRTD standardı)
-- **Manuel Tab**: TC No + Ad + Soyad + Doğum Tarihi ile form tabanlı doğrulama
-- Pulse animasyonu (NFC bekleme durumu görseli)
-- Kimlik kartı yerleştirme rehberi
-- Doğrulama durum kartı (VERIFIED / UNVERIFIED)
-
-### TC Checksum Algoritması
-
-```js
-// 11 hane, ilk hane 0 olamaz
-// d10 = (7*(d[0]+d[2]+d[4]+d[6]+d[8]) - (d[1]+d[3]+d[5]+d[7])) mod 10
-// d11 = (d[0]+...+d[9]) mod 10
-```
-
----
-
-## NFC Entegrasyonu — Tam Kurulum Rehberi
-
-### Paket
+### EAS Build (Gerçek NFC Testi)
 
 ```bash
-npm install react-native-nfc-manager
-```
-
-Paket `package.json`'a eklenmiştir (`"react-native-nfc-manager": "^3.14.14"`).
-
-### ⚠️ Expo Go'da NFC Çalışmaz
-
-`react-native-nfc-manager` native kod gerektirdiğinden Expo Go ile çalışmaz.
-`VerificationScreen.js` paketi `try/catch` ile isteğe bağlı yükler — UI her ortamda görüntülenir:
-
-```js
-let NfcManager = null;
-let NfcTech = null;
-try {
-  const nfcModule = require('react-native-nfc-manager');
-  NfcManager = nfcModule.default;
-  NfcTech = nfcModule.NfcTech;
-} catch {
-  // Expo Go veya paket yüklenmemiş — NFC devre dışı, UI çalışmaya devam eder
-}
-```
-
-### Gerçek NFC Testi — EAS Build
-
-**Adım 1: `app.json` güncelle**
-
-```json
-{
-  "expo": {
-    "android": {
-      "permissions": ["android.permission.NFC"]
-    },
-    "plugins": [
-      [
-        "react-native-nfc-manager",
-        {
-          "nfcPermission": "TC Kimlik Kartınızı okumak için NFC gereklidir."
-        }
-      ]
-    ],
-    "ios": {
-      "infoPlist": {
-        "NFCReaderUsageDescription": "TC Kimlik Kartınızı doğrulamak için NFC kullanılır."
-      }
-    }
-  }
-}
-```
-
-**Adım 2: iOS — Apple Developer Console**
-
-1. Certificates, Identifiers & Profiles → Identifiers → Uygulama Bundle ID
-2. Capabilities → Near Field Communication Tag Reading → Enable
-3. Provisioning profile'ı yeniden oluştur
-
-**Adım 3: EAS Build**
-
-```bash
-npm install -g eas-cli
-eas login
-
-# Android APK (geliştirme için)
+npm install -g eas-cli && eas login
 eas build --platform android --profile development
-
-# iOS IPA (geliştirme için, fiziksel cihaz gerekir)
-eas build --platform ios --profile development
-```
-
-**Not:** iOS simülatörde NFC çalışmaz. Fiziksel iPhone gerekir.
-
----
-
-## TC Kimlik Kartı NFC Okuma Teknik Detayları
-
-Türkiye TC Kimlik Kartı (2017+) ICAO 9303 standardını kullanır (MRTD — Machine Readable Travel Documents):
-
-| Adım | Açıklama |
-|------|----------|
-| 1 | Karta `IsoDep` NFC teknolojisi ile bağlanılır |
-| 2 | MRZ'den BAC anahtarı türetilir (belge no + doğum tarihi + son geçerlilik tarihi) |
-| 3 | BAC (Basic Access Control) authentication tamamlanır |
-| 4 | DG1 (kişisel bilgi grubu) okunur: ad, soyad, TC No, doğum tarihi, cinsiyet |
-| 5 | DG2 (fotoğraf) opsiyonel |
-| 6 | Veriler backend'e `POST /api/verification/identity` ile gönderilir |
-
-**NFC anteni konumu:**
-- Android: Genellikle arka kamera yakını (orta-üst)
-- iPhone: Üst kenar
-
-**Kart tutma şekli:** Kartı tam düz, NFC sembolü telefona bakacak şekilde, 1–3 cm mesafede tutun.
-
-**Gelecek Geliştirme:**
-- Kamera ile MRZ OCR → BAC anahtarı otomatik türetme (kullanıcı MRZ'yi manuel girmez)
-- EAC (Extended Access Control) ile parmak izi verisi (opsiyonel, daha yüksek güvenlik)
-
----
-
-## Backend Bağlantısı
-
-Ana sunucu: `http://localhost:8080` (api.config.js ile konfigüre edilir)
-
-```js
-// Kimlik doğrulama gönderimi
-await api.post('/api/verification/identity', {
-  tcNo: '12345678901',
-  firstName: 'Ali',
-  lastName: 'Yılmaz',
-  dateOfBirth: '1990-05-15',
-  method: 'NFC',      // veya 'MANUAL' veya 'MRZ'
-  mrzData: null       // NFC tag raw verisi (opsiyonel)
-});
-
-// Doğrulama durumu sorgulama
-await api.get('/api/verification/status');
 ```
 
 ---
 
-## Haftalık İlerleme
+## Disclaimer Modal
 
-### Week 1–5 — Temel Altyapı
-- [x] React Navigation kurulumu (Stack + Tab)
-- [x] Design system ve bileşenler
-- [x] Auth flow (login/register + JWT)
-- [x] Sözleşme ekranları (list, detail, create)
-- [x] Ayarlar ekranı (profil, şifre, bildirimler)
-
-### Week 6 — PDF
-- [x] ContractDetailScreen PDF indirme
-
-### Week 7 — Onay Akışı
-- [x] ApprovalsScreen
-
-### Week 8 — NFC & Kimlik Doğrulama
-- [x] `react-native-nfc-manager` paketi eklendi (`package.json`)
-- [x] `VerificationScreen.js` — NFC UI + pulse animasyon + kimlik kartı rehberi
-- [x] Manuel form — TC checksum algoritması + backend entegrasyonu
-- [x] Doğrulama durumu kartı (VERIFIED / UNVERIFIED)
-- [x] `SettingsScreen.js` — Güvenlik tabına "Kimlik Doğrulama" satırı
-- [x] `App.js` — `SettingsStack` + `VerificationScreen` navigasyonu
-- [ ] `app.json` NFC plugin yapılandırması (Enes)
-- [ ] EAS Build ile gerçek cihaz NFC testi (Enes)
-- [ ] MRZ OCR ile otomatik BAC anahtarı türetme (Burak)
-
-### Week 9 — Chatbot
-- [ ] Chatbot UI entegrasyonu
-
-### Week 10 — Yasal Uyari & Guvenlik (Mevcut)
-- [x] `DisclaimerModal.js` — Yasal uyari modal bileseni (React Native Modal)
-- [x] `checkDisclaimerAccepted()` — Async yardimci fonksiyon (SecureStore + backend)
-- [x] `App.js` — `showDisclaimer` state + DisclaimerModal entegrasyonu
-- [x] Auth sonrasi disclaimer kontrolu
-- [x] `api.service.js` — Global 401 handler: token temizleme + otomatik Login yonlendirme
-
----
-
-## Disclaimer (Yasal Uyari) Bileseni
-
-`src/components/DisclaimerModal.js`
-
-Kullanici basarili giris yaptiktan sonra modal olarak gosterilir.
-
-**Akis:**
-1. `App.js` `checkAuth()` fonksiyonu — kullanici dogrulandi
-2. `checkDisclaimerAccepted()` cagirilir:
-   - Once `SecureStore.getItemAsync('disclaimer_accepted_v1.0')` kontrolu
-   - Yoksa `GET /api/disclaimer/status` backend kontrolu
-3. Kabul edilmemisse `showDisclaimer = true` → `<DisclaimerModal visible={true} />` gosterilir
-4. Ekran geri tusuna basilamaz (`onRequestClose` devre disi)
-5. "Anladim ve Kabul Ediyorum" tiklaninca `POST /api/disclaimer/accept` cagirilir, `platform: 'MOBILE'` gonderilir
-6. SecureStore'a kaydedilir, modal kapanir
-
-**Uyari metni:**
-> "Bu platformda verilen hukuki tavsiyeler yanıltıcı olabilir ve bir avukata danışmanız şiddetle tavsiye edilir."
-
-Sozlesme `finalize` isleminde backend bu kaydı zorunlu tutar — kabul edilmeden sozlesme sonuclandirilamaz.
-
-## Oturum Suresi Dolunca Otomatik Cikis
-
-`api.service.js` herhangi bir endpoint'ten `401` aldiginda:
-1. SecureStore'dan `authToken` ve `user` silinir
-2. `App.js`'te register edilen `_onUnauthorized` callback'i cagirilir
-3. `isAuthenticated = false` → `Stack.Navigator` otomatik olarak Login ekranini gosterir
-
-Bu sayede eski/suresi dolmus token ile uygulamaya girilse bile kullanici otomatik olarak Login ekranina yonlendirilir.
+Başarılı girişten sonra `checkDisclaimerAccepted()` çağrılır.
+Kabul edilmemişse `DisclaimerModal` gösterilir; kullanıcı geri tuşuyla kapatamaz.
 
 ---
 
 ## Takım
 
-- **Enes Burak ATAY** — Lead & Mobile + Coordinator
+- **Enes Burak ATAY** — Lead & Mobile
 - **Deniz Eren ARICI** — Frontend & UI Engineer
 - **Burak DERE** — AI & Data Engineer
