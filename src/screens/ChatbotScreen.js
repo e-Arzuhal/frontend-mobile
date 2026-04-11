@@ -10,6 +10,7 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radius, shadows } from '../styles/tokens';
@@ -43,9 +44,14 @@ export default function ChatbotScreen() {
     setInput(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + text);
   }, []);
 
+  const handleVoiceError = useCallback((err) => {
+    Alert.alert('Ses Tanıma Hatası', err);
+  }, []);
+
   const { isListening, isAvailable: voiceAvailable, toggleListening } = useVoiceInput({
     lang: 'tr-TR',
     onResult: handleVoiceResult,
+    onError: handleVoiceError,
   });
 
   useEffect(() => {
