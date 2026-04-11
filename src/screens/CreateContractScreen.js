@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import StepIndicator from '../components/StepIndicator';
 import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
 import { API_BASE_URL } from '../config/api.config';
+import useVoiceInput from '../hooks/useVoiceInput';
 
 const TOTAL_STEPS = 4;
 const stepLabels = ['Metin Girişi', 'Sözleşme Önerisi', 'PDF Önizleme', 'Onay & İmza'];
@@ -75,6 +76,24 @@ export default function CreateContractScreen({ navigation }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [selectedSuggestions, setSelectedSuggestions] = useState({});
+
+  /* ── Voice-to-Text ── */
+  const handleVoiceResult = useCallback((text) => {
+    setForm(prev => ({
+      ...prev,
+      content: prev.content + (prev.content && !prev.content.endsWith(' ') ? ' ' : '') + text,
+    }));
+  }, []);
+
+  const handleVoiceError = useCallback((err) => {
+    Alert.alert('Ses Tanıma Hatası', err);
+  }, []);
+
+  const { isListening, isAvailable: voiceAvailable, toggleListening } = useVoiceInput({
+    lang: 'tr-TR',
+    onResult: handleVoiceResult,
+    onError: handleVoiceError,
+  });
 
   const updateField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -474,6 +493,23 @@ export default function CreateContractScreen({ navigation }) {
               numberOfLines={12}
               maxLength={5000}
             />
+            {/* Mikrofon butonu */}
+            {voiceAvailable && (
+              <TouchableOpacity
+                style={[styles.micButton, isListening && styles.micButtonActive]}
+                onPress={toggleListening}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={isListening ? 'mic' : 'mic-outline'}
+                  size={20}
+                  color={isListening ? '#fff' : colors.textMuted}
+                />
+                <Text style={[styles.micButtonText, isListening && styles.micButtonTextActive]}>
+                  {isListening ? 'Dinleniyor...' : 'Sesle Yaz'}
+                </Text>
+              </TouchableOpacity>
+            )}
             <Input
               label="Karşı Taraf TC Kimlik No (Opsiyonel)"
               value={form.counterpartyTcKimlik}
@@ -595,6 +631,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 18,
+  },
+
+  // Mic button
+  micButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceAlt,
+    marginTop: 8,
+  },
+  micButtonActive: {
+    backgroundColor: '#ef4444',
+  },
+  micButtonText: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  micButtonTextActive: {
+    color: '#fff',
   },
 
   stepTitle: {
