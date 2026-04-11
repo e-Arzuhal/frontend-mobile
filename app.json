@@ -16,7 +16,9 @@
       "supportsTablet": true,
       "infoPlist": {
         "NFCReaderUsageDescription": "TC Kimlik Kartınızı NFC ile okumak için gereklidir.",
-        "com.apple.developer.nfc.readersession.iso7816.select-identifiers": ["A0000002471001"]
+        "com.apple.developer.nfc.readersession.iso7816.select-identifiers": [
+          "A0000002471001"
+        ]
       }
     },
     "android": {
@@ -42,8 +44,17 @@
         "react-native-nfc-manager",
         {
           "nfcPermission": "TC Kimlik Kartınızı okumak için NFC gereklidir.",
-          "selectIdentifiers": ["A0000002471001"],
+          "selectIdentifiers": [
+            "A0000002471001"
+          ],
           "systemCodes": []
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Sesle yazma özelliği için mikrofon erişimi gereklidir.",
+          "speechRecognitionPermission": "Konuşmanızı metne dönüştürmek için ses tanıma izni gereklidir."
         }
       ]
     ]

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { colors, fonts, radius, shadows } from '../styles/tokens';
 import ScreenWrapper from '../components/ScreenWrapper';
 import Header from '../components/Header';
 import chatbotService from '../services/chatbot.service';
+import useVoiceInput from '../hooks/useVoiceInput';
 
 const INITIAL_MESSAGE = {
   id: '0',
@@ -36,6 +37,16 @@ export default function ChatbotScreen() {
   const [loading, setLoading] = useState(false);
   const [suggested, setSuggested] = useState(SUGGESTED_INITIAL);
   const flatListRef = useRef(null);
+
+  /* ── Voice-to-Text ── */
+  const handleVoiceResult = useCallback((text) => {
+    setInput(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + text);
+  }, []);
+
+  const { isListening, isAvailable: voiceAvailable, toggleListening } = useVoiceInput({
+    lang: 'tr-TR',
+    onResult: handleVoiceResult,
+  });
 
   useEffect(() => {
     if (messages.length > 1) {
@@ -174,6 +185,20 @@ export default function ChatbotScreen() {
               color={input.trim() && !loading ? colors.textInverse : colors.textMuted}
             />
           </TouchableOpacity>
+          {/* Mikrofon butonu */}
+          {voiceAvailable && (
+            <TouchableOpacity
+              style={[styles.micButton, isListening && styles.micButtonActive]}
+              onPress={toggleListening}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={isListening ? 'mic' : 'mic-outline'}
+                size={18}
+                color={isListening ? '#fff' : colors.textMuted}
+              />
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </ScreenWrapper>
@@ -304,5 +329,17 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: colors.surfaceAlt,
+  },
+  micButton: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  micButtonActive: {
+    backgroundColor: '#ef4444',
   },
 });
