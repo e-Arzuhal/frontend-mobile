@@ -24,9 +24,23 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
 
   // Cihazda speech recognition var mı kontrol et
   useEffect(() => {
+    let cancelled = false;
     ExpoSpeechRecognitionModule.isRecognitionAvailable()
-      .then(setIsAvailable)
-      .catch(() => setIsAvailable(false));
+      .then((available) => { if (!cancelled) setIsAvailable(available); })
+      .catch(() => { if (!cancelled) setIsAvailable(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Unmount olursa mikrofonu kesin durdur — aksi halde ekrandan çıkılsa
+  // bile native recognizer açık kalabilir (pil + privacy sorunu).
+  useEffect(() => {
+    return () => {
+      try {
+        ExpoSpeechRecognitionModule.stop();
+      } catch {
+        // zaten kapalıysa sessizce geç
+      }
+    };
   }, []);
 
   // Event listeners
@@ -59,24 +73,34 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
   const startListening = useCallback(async () => {
     if (!isAvailable) return;
 
-    // İzin kontrolü
-    const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!result.granted) {
-      if (onErrorRef.current) {
-        onErrorRef.current('Mikrofon izni reddedildi. Ayarlardan izin verin.');
+    try {
+      // İzin kontrolü
+      const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!result.granted) {
+        onErrorRef.current?.('Mikrofon izni reddedildi. Ayarlardan izin verin.');
+        return;
       }
-      return;
-    }
 
-    ExpoSpeechRecognitionModule.start({
-      lang,
-      interimResults: false,
-      continuous: false, // Her cümle sonrası durur — daha stabil
-    });
+      ExpoSpeechRecognitionModule.start({
+        lang,
+        interimResults: false,
+        continuous: false, // Her cümle sonrası durur — daha stabil
+      });
+    } catch (err) {
+      // İzin promise'i veya start() reject olursa kullanıcıyı bilgilendir,
+      // aksi halde mic butonuna basmak sessizce hiçbir şey yapmaz.
+      onErrorRef.current?.(
+        `Ses tanıma başlatılamadı: ${err?.message || err}`
+      );
+    }
   }, [isAvailable, lang]);
 
   const stopListening = useCallback(() => {
-    ExpoSpeechRecognitionModule.stop();
+    try {
+      ExpoSpeechRecognitionModule.stop();
+    } catch {
+      // zaten kapalıysa sessizce geç
+    }
   }, []);
 
   const toggleListening = useCallback(() => {
