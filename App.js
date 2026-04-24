@@ -22,6 +22,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { colors, fonts } from './src/styles/tokens';
 import authService from './src/services/auth.service';
 import { setOnUnauthorized } from './src/services/api.service';
+import pushNotificationService from './src/services/pushNotification.service';
 import DisclaimerModal, { checkDisclaimerAccepted } from './src/components/DisclaimerModal';
 
 import LoginScreen from './src/screens/LoginScreen';
@@ -159,6 +160,20 @@ export default function App() {
     setOnUnauthorized(() => setIsAuthenticated(false));
     checkAuth();
   }, []);
+
+  useEffect(() => {
+    const registerPush = async () => {
+      if (isAuthenticated) {
+        try {
+          await pushNotificationService.registerForPushNotificationsAsync();
+        } catch {
+          // Push registration hatasi login akisini bloklamamali.
+        }
+      }
+    };
+
+    registerPush();
+  }, [isAuthenticated]);
 
   const checkAuth = async () => {
     const authenticated = await authService.isAuthenticated();
