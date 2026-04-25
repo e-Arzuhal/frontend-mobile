@@ -18,7 +18,7 @@ const getBaseUrl = () => {
     }
     return 'http://localhost:8080';
   }
-  return 'http://localhost:8080'; // Production URL buraya gelecek
+  return process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8080';
 };
 
 export const API_BASE_URL = getBaseUrl();
