@@ -20,17 +20,7 @@ import ScreenWrapper from '../components/ScreenWrapper';
 import StepIndicator from '../components/StepIndicator';
 import verificationService from '../services/verification.service';
 import { parseTD1, buildBacInput, formatMrzDate, isValidTcNo } from '../utils/mrz-parser';
-
-/* ─── Expo Camera (opsiyonel — EAS Build gerekli) ─── */
-let CameraView = null;
-let useCameraPermissions = null;
-try {
-  const camModule = require('expo-camera');
-  CameraView = camModule.CameraView;
-  useCameraPermissions = camModule.useCameraPermissions;
-} catch {
-  // expo-camera mevcut değil veya Expo Go
-}
+import MrzScanModal from '../components/MrzScanModal';
 
 /* ─── NFC Manager (opsiyonel — EAS Build gerekli) ─── */
 let NfcManager = null;
@@ -44,26 +34,22 @@ try {
 }
 
 const NFC_AVAILABLE = !!NfcManager;
-const CAMERA_AVAILABLE = !!CameraView;
 
+// Camera steps removed — they provided no functional value (no OCR is
+// performed on the captured images; MRZ still had to be typed manually
+// for BAC key derivation) and the new-arch CameraView froze on several
+// Android devices. Flow is now: Bilgiler → NFC Tara.
 const STEPS = [
-  'Ön Yüz',
-  'Arka Yüz',
   'Bilgiler',
   'NFC Tara',
 ];
 
 export default function VerificationScreen({ navigation, route }) {
+  // Start directly on data entry (previous step indices 0 and 1 were the
+  // camera steps, now removed).
   const [currentStep, setCurrentStep] = useState(0);
   const [verificationStatus, setVerificationStatus] = useState(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(true);
-
-  // Camera state
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions?.() || [null, async () => null];
-  const [frontPhoto, setFrontPhoto] = useState(null);
-  const [backPhoto, setBackPhoto] = useState(null);
-  const cameraRef = useRef(null);
-  const [isCapturing, setIsCapturing] = useState(false);
 
   // MRZ / Document data
   const [documentNumber, setDocumentNumber] = useState('');
@@ -84,6 +70,11 @@ export default function VerificationScreen({ navigation, route }) {
 
   // Submission
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitFailed, setSubmitFailed] = useState(false);
+  const [submitProgress, setSubmitProgress] = useState(''); // e.g. "2/5 deneniyor..."
+
+  // MRZ OCR scan modal
+  const [scanModalVisible, setScanModalVisible] = useState(false);
 
   // Whether this is a contract-gate flow (redirected from contract action)
   const isContractGate = route?.params?.contractGate === true;
@@ -124,36 +115,6 @@ export default function VerificationScreen({ navigation, route }) {
     pulseAnim.setValue(1);
   };
 
-  /* ─── Request camera permission ─── */
-  const ensureCameraPermission = async () => {
-    if (!CAMERA_AVAILABLE) return false;
-    if (cameraPermission?.granted) return true;
-    const result = await requestCameraPermission();
-    return result?.granted;
-  };
-
-  /* ─── Take photo ─── */
-  const takePhoto = async (side) => {
-    if (!cameraRef.current) return;
-    setIsCapturing(true);
-    try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.8,
-        base64: false,
-      });
-      if (side === 'front') {
-        setFrontPhoto(photo);
-      } else {
-        setBackPhoto(photo);
-      }
-      // Move to next step
-      setCurrentStep(prev => prev + 1);
-    } catch (err) {
-      Alert.alert('Hata', 'Fotoğraf çekilemedi. Tekrar deneyin.');
-    } finally {
-      setIsCapturing(false);
-    }
-  };
 
   /* ─── Date helpers ─── */
   const parseDisplayDate = (display) => {
@@ -178,10 +139,50 @@ export default function VerificationScreen({ navigation, route }) {
     setDateOfExpiry(parseDisplayDate(val));
   };
 
+  const yymmddToDisplay = (yymmdd) => {
+    if (!yymmdd || yymmdd.length !== 6) return '';
+    const yy = parseInt(yymmdd.slice(0, 2), 10);
+    const mm = yymmdd.slice(2, 4);
+    const dd = yymmdd.slice(4, 6);
+    const year = yy < 50 ? 2000 + yy : 1900 + yy;
+    return `${dd}.${mm}.${year}`;
+  };
+
+  /* ─── MRZ OCR scan result ─── */
+  const handleMrzScanResult = useCallback((mrzLines) => {
+    try {
+      const parsed = parseTD1(mrzLines.line1, mrzLines.line2, mrzLines.line3);
+      if (!parsed) {
+        Alert.alert('Tarama Hatası', 'MRZ okundu ancak ayrıştırılamadı. Lütfen elle giriniz.');
+        setScanModalVisible(false);
+        return;
+      }
+      // Populate the three BAC fields + their display mirrors
+      if (parsed.documentNumber) setDocumentNumber(parsed.documentNumber);
+      if (parsed.dateOfBirth && parsed.dateOfBirth.length === 6) {
+        setDateOfBirth(parsed.dateOfBirth);
+        setDobDisplay(yymmddToDisplay(parsed.dateOfBirth));
+      }
+      if (parsed.dateOfExpiry && parsed.dateOfExpiry.length === 6) {
+        setDateOfExpiry(parsed.dateOfExpiry);
+        setExpiryDisplay(yymmddToDisplay(parsed.dateOfExpiry));
+      }
+      setScanModalVisible(false);
+
+      // Auto-advance to NFC step shortly after closing the modal
+      setTimeout(() => setCurrentStep(1), 350);
+    } catch (e) {
+      Alert.alert('Tarama Hatası', e?.message || 'MRZ işlenemedi.');
+      setScanModalVisible(false);
+    }
+  }, []);
+
   /* ─── NFC Scan ─── */
   const handleNfcScan = async () => {
     setNfcError('');
     setNfcResult(null);
+    setSubmitFailed(false);
+    setSubmitProgress('');
 
     if (!NFC_AVAILABLE || !nfcSupported) {
       setNfcState('scanning');
@@ -233,7 +234,18 @@ export default function VerificationScreen({ navigation, route }) {
 
       setNfcResult({ dg1, parsedData });
 
-      // Submit to backend
+      // IMPORTANT: close the NFC/IsoDep session BEFORE making the HTTP
+      // request. Many Android devices (Samsung/Xiaomi/etc.) cannot do
+      // Wi-Fi/HTTP while an NFC tech session is still open — the result
+      // is a misleading "Network request failed". Release the NFC radio
+      // first, then submit. 1500 ms + an automatic retry handles even
+      // slow radios (e.g. Samsung with heavy OneUI).
+      try { await NfcManager.cancelTechnologyRequest(); } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Submit to backend. submitVerification contains an internal
+      // retry-once path for transient "network request failed" errors
+      // that happen while the NFC radio is still releasing.
       await submitVerification(parsedData, dg1);
 
     } catch (err) {
@@ -245,46 +257,176 @@ export default function VerificationScreen({ navigation, route }) {
         setNfcError(err.message || 'Kart okunamadı. Kimliğinizi telefonun NFC bölgesine yaklaştırın ve bilgileri kontrol edin.');
       }
     } finally {
+      // Idempotent — safe to call even after we already cancelled above
       NfcManager.cancelTechnologyRequest().catch(() => {});
     }
   };
 
-  /* ─── Submit verification to backend ─── */
+  /* ─── Submit verification to backend ───
+   *
+   * Why this is so aggressive:
+   *   On Android, the NFC controller and Wi-Fi/cellular radio share a
+   *   coexistence arbiter (especially on Samsung OneUI / Xiaomi MIUI).
+   *   `cancelTechnologyRequest()` only *requests* release — the NFC HAL
+   *   may keep the shared bus busy for 2–5 seconds afterward. During
+   *   that window, the very first HTTP request fails instantly with
+   *   "Network request failed", regardless of any fixed delay.
+   *
+   *   Previous attempts (1500 ms + single retry) still lost this race
+   *   on slow radios. The fix is to retry through the arbiter window:
+   *   5 attempts at 0s, 2s, 4s, 8s, 12s — ~26 s total budget — and
+   *   expose a manual retry button that reuses the cached NFC result
+   *   so the user never has to rescan the physical card.
+   */
+  const ATTEMPT_DELAYS_MS = [0, 2000, 4000, 8000, 12000];
+
+  const isNetworkError = (err) => {
+    const msg = String(err?.message || '').toLowerCase();
+    return (
+      msg.includes('network') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('timeout') ||
+      msg.includes('zaman aşımı') ||
+      msg.includes('zaman asimi') ||
+      msg.includes('aborted')
+    );
+  };
+
+  const buildPayload = (parsedData, dg1) => ({
+    tcNo: parsedData?.tcNo || '',
+    firstName: parsedData?.firstName || '',
+    lastName: parsedData?.lastName || '',
+    dateOfBirth: parsedData?.dateOfBirth
+      ? formatYymmddToIso(parsedData.dateOfBirth)
+      : null,
+    method: 'NFC',
+    mrzData: dg1?.raw || '',
+  });
+
+  /**
+   * Check the server to see if the verification is already recorded.
+   * This is critical for handling the case where POST /verification/identity
+   * actually reached the server and returned 204, but the client's fetch
+   * threw "Network request failed" because the response TCP frame was
+   * dropped (NFC radio coexistence). The server log confirms this happens:
+   * the POST succeeds with 204, yet the client never sees the ack.
+   */
+  const checkServerVerified = async () => {
+    try {
+      const status = await verificationService.getStatus();
+      return status?.verified === true;
+    } catch {
+      return false;
+    }
+  };
+
+  const finishSuccess = (parsedData, method) => {
+    setSubmitProgress('');
+    setIsSubmitting(false);
+    setSubmitFailed(false);
+    setVerificationStatus({ verified: true, method });
+
+    const displayName = parsedData?.firstName && parsedData?.lastName
+      ? `${parsedData.firstName} ${parsedData.lastName} kimliği doğrulandı.`
+      : 'Kimliğiniz başarıyla doğrulandı.';
+
+    Alert.alert(
+      'Doğrulama Başarılı',
+      displayName,
+      [{
+        text: 'Tamam',
+        onPress: () => {
+          if (isContractGate && onVerified) {
+            onVerified();
+          }
+          navigation.goBack();
+        },
+      }]
+    );
+  };
+
   const submitVerification = async (parsedData, dg1) => {
     setIsSubmitting(true);
-    try {
-      const payload = {
-        tcNo: parsedData?.tcNo || '',
-        firstName: parsedData?.firstName || '',
-        lastName: parsedData?.lastName || '',
-        dateOfBirth: parsedData?.dateOfBirth
-          ? formatYymmddToIso(parsedData.dateOfBirth)
-          : null,
-        method: 'NFC',
-        mrzData: dg1?.raw || '',
-      };
+    setSubmitFailed(false);
+    setSubmitProgress('');
 
-      const result = await verificationService.verify(payload);
-      setVerificationStatus(result);
+    const payload = buildPayload(parsedData, dg1);
+    let lastError = null;
 
-      Alert.alert(
-        'Doğrulama Başarılı',
-        `${result.firstName} ${result.lastName} kimliği doğrulandı.`,
-        [{
-          text: 'Tamam',
-          onPress: () => {
-            if (isContractGate && onVerified) {
-              onVerified();
-              navigation.goBack();
-            }
-          },
-        }]
-      );
-    } catch (err) {
-      Alert.alert('Hata', err.message || 'Doğrulama sunucuya gönderilemedi.');
-    } finally {
-      setIsSubmitting(false);
+    // Before the first POST, do a pre-check — maybe an earlier attempt
+    // already succeeded server-side (common when user hits "Sunucuya
+    // Gönder" manually after an auto-submit that lost its response).
+    setSubmitProgress('Durum kontrol ediliyor...');
+    if (await checkServerVerified()) {
+      finishSuccess(parsedData, payload.method);
+      return;
     }
+
+    for (let i = 0; i < ATTEMPT_DELAYS_MS.length; i++) {
+      const delay = ATTEMPT_DELAYS_MS[i];
+      if (delay > 0) {
+        setSubmitProgress(
+          `Bağlantı bekleniyor... (${i + 1}/${ATTEMPT_DELAYS_MS.length})`
+        );
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        setSubmitProgress(`Gönderiliyor... (${i + 1}/${ATTEMPT_DELAYS_MS.length})`);
+      }
+
+      try {
+        await verificationService.verify(payload);
+        finishSuccess(parsedData, payload.method);
+        return;
+      } catch (err) {
+        lastError = err;
+        if (!isNetworkError(err)) {
+          // Non-network error (e.g. 400, 401, 500) — permanent, stop.
+          break;
+        }
+
+        // --- Read-after-write idempotency check --- //
+        // The backend might have already recorded the verification
+        // (server received POST, returned 204, but response never made
+        // it back to us). A GET is far more likely to succeed than the
+        // POST because it's smaller and the NFC radio window may have
+        // opened. If status says verified → we're done, ignore the
+        // misleading POST error.
+        setSubmitProgress('Sunucu durumu doğrulanıyor...');
+        // Small settle before the GET to let radio release further
+        await new Promise(r => setTimeout(r, 800));
+        if (await checkServerVerified()) {
+          finishSuccess(parsedData, payload.method);
+          return;
+        }
+        // Still not verified server-side — fall through to next backoff
+      }
+    }
+
+    // Final safety net: one last status poll before declaring failure.
+    setSubmitProgress('Son durum kontrolü...');
+    if (await checkServerVerified()) {
+      finishSuccess(parsedData, payload.method);
+      return;
+    }
+
+    // All attempts + status polls exhausted. Expose manual retry.
+    setSubmitProgress('');
+    setIsSubmitting(false);
+    setSubmitFailed(true);
+
+    const msg = isNetworkError(lastError)
+      ? 'Sunucuya bağlanılamadı. İnternet bağlantınızı kontrol edin ve "Sunucuya Gönder" butonuyla tekrar deneyin — kimliği yeniden okutmanıza gerek yok.'
+      : (lastError?.message || 'Doğrulama sunucuya gönderilemedi.');
+    Alert.alert('Bağlantı Hatası', msg);
+  };
+
+  /* ─── Manual retry: user-initiated resubmit using cached NFC data ─── */
+  const handleManualResubmit = async () => {
+    if (!nfcResult?.parsedData || !nfcResult?.dg1) {
+      Alert.alert('Hata', 'Önce NFC ile kimliği okutun.');
+      return;
+    }
+    await submitVerification(nfcResult.parsedData, nfcResult.dg1);
   };
 
   const formatYymmddToIso = (yymmdd) => {
@@ -294,16 +436,6 @@ export default function VerificationScreen({ navigation, route }) {
     const dd = yymmdd.slice(4, 6);
     const year = yy < 50 ? 2000 + yy : 1900 + yy;
     return `${year}-${mm}-${dd}`;
-  };
-
-  /* ─── Skip camera (no camera available) ─── */
-  const handleSkipCamera = (side) => {
-    if (side === 'front') {
-      setFrontPhoto({ skipped: true });
-    } else {
-      setBackPhoto({ skipped: true });
-    }
-    setCurrentStep(prev => prev + 1);
   };
 
   /* ─── Render: Status Card ─── */
@@ -346,141 +478,7 @@ export default function VerificationScreen({ navigation, route }) {
     );
   };
 
-  /* ─── Render: Step 0 - Front of ID (Camera) ─── */
-  const renderFrontCameraStep = () => (
-    <Card style={styles.stepCard}>
-      <View style={styles.stepHeader}>
-        <Ionicons name="camera-outline" size={24} color={colors.accent} />
-        <Text style={styles.stepTitle}>Kimliğin Ön Yüzü</Text>
-      </View>
-      <Text style={styles.stepDescription}>
-        TC Kimlik Kartınızın ön yüzünü (fotoğraflı taraf) kameraya gösterin.
-        Fotoğraf, ad, soyad ve TC numaranız görünür olmalı.
-      </Text>
-
-      {CAMERA_AVAILABLE && cameraPermission?.granted ? (
-        <View style={styles.cameraContainer}>
-          <CameraView
-            ref={cameraRef}
-            style={styles.camera}
-            facing="back"
-          >
-            {/* ID Card frame overlay */}
-            <View style={styles.cameraOverlay}>
-              <View style={styles.idFrame}>
-                <View style={[styles.corner, styles.cornerTL]} />
-                <View style={[styles.corner, styles.cornerTR]} />
-                <View style={[styles.corner, styles.cornerBL]} />
-                <View style={[styles.corner, styles.cornerBR]} />
-              </View>
-              <Text style={styles.overlayText}>Kimlik kartını çerçeveye yerleştirin</Text>
-            </View>
-          </CameraView>
-
-          <Button
-            title={isCapturing ? 'Çekiliyor...' : 'Fotoğraf Çek'}
-            variant="accent"
-            onPress={() => takePhoto('front')}
-            loading={isCapturing}
-            fullWidth
-            style={styles.captureButton}
-            icon={<Ionicons name="camera" size={20} color={colors.textInverse} />}
-          />
-        </View>
-      ) : (
-        <View style={styles.noCameraBox}>
-          <Ionicons name="camera-outline" size={48} color={colors.textMuted} />
-          <Text style={styles.noCameraText}>
-            {!CAMERA_AVAILABLE
-              ? 'Kamera bu ortamda kullanılamıyor. EAS Build ile gerçek cihazda test edin.'
-              : 'Kamera izni gerekli.'}
-          </Text>
-          {CAMERA_AVAILABLE && !cameraPermission?.granted && (
-            <Button
-              title="Kamera İzni Ver"
-              variant="accent"
-              onPress={ensureCameraPermission}
-              style={{ marginTop: 12 }}
-            />
-          )}
-          <Button
-            title="Kamerasız Devam Et"
-            variant="primary"
-            onPress={() => handleSkipCamera('front')}
-            style={{ marginTop: 12 }}
-          />
-        </View>
-      )}
-    </Card>
-  );
-
-  /* ─── Render: Step 1 - Back of ID (Camera) ─── */
-  const renderBackCameraStep = () => (
-    <Card style={styles.stepCard}>
-      <View style={styles.stepHeader}>
-        <Ionicons name="camera-outline" size={24} color={colors.accent} />
-        <Text style={styles.stepTitle}>Kimliğin Arka Yüzü</Text>
-      </View>
-      <Text style={styles.stepDescription}>
-        TC Kimlik Kartınızın arka yüzünü (MRZ kodlu taraf) kameraya gösterin.
-        Alttaki makine tarafından okunabilir satırlar görünür olmalı.
-      </Text>
-
-      {CAMERA_AVAILABLE && cameraPermission?.granted ? (
-        <View style={styles.cameraContainer}>
-          <CameraView
-            ref={cameraRef}
-            style={styles.camera}
-            facing="back"
-          >
-            <View style={styles.cameraOverlay}>
-              <View style={styles.idFrame}>
-                <View style={[styles.corner, styles.cornerTL]} />
-                <View style={[styles.corner, styles.cornerTR]} />
-                <View style={[styles.corner, styles.cornerBL]} />
-                <View style={[styles.corner, styles.cornerBR]} />
-              </View>
-              {/* MRZ zone highlight */}
-              <View style={styles.mrzHighlight}>
-                <Text style={styles.mrzHighlightText}>MRZ Bölgesi</Text>
-                <View style={styles.mrzLines}>
-                  <View style={styles.mrzLine} />
-                  <View style={styles.mrzLine} />
-                  <View style={styles.mrzLine} />
-                </View>
-              </View>
-              <Text style={styles.overlayText}>Arka yüzü çerçeveye yerleştirin</Text>
-            </View>
-          </CameraView>
-
-          <Button
-            title={isCapturing ? 'Çekiliyor...' : 'Fotoğraf Çek'}
-            variant="accent"
-            onPress={() => takePhoto('back')}
-            loading={isCapturing}
-            fullWidth
-            style={styles.captureButton}
-            icon={<Ionicons name="camera" size={20} color={colors.textInverse} />}
-          />
-        </View>
-      ) : (
-        <View style={styles.noCameraBox}>
-          <Ionicons name="camera-outline" size={48} color={colors.textMuted} />
-          <Text style={styles.noCameraText}>
-            Kamera kullanılamıyor. Belge bilgilerini bir sonraki adımda elle gireceksiniz.
-          </Text>
-          <Button
-            title="Kamerasız Devam Et"
-            variant="primary"
-            onPress={() => handleSkipCamera('back')}
-            style={{ marginTop: 12 }}
-          />
-        </View>
-      )}
-    </Card>
-  );
-
-  /* ─── Render: Step 2 - Document Data Entry ─── */
+  /* ─── Render: Document Data Entry ─── */
   const renderDataEntryStep = () => {
     const isDataValid = documentNumber.length >= 3 && dateOfBirth.length === 6 && dateOfExpiry.length === 6;
 
@@ -494,6 +492,30 @@ export default function VerificationScreen({ navigation, route }) {
           Kimlik kartınızın arka yüzündeki MRZ (makine tarafından okunabilir bölge) bilgilerini girin.
           Bu bilgiler NFC çip şifresini çözmek için kullanılacaktır.
         </Text>
+
+        {/* Camera OCR: scan the MRZ instead of typing it manually. */}
+        <TouchableOpacity
+          style={styles.scanCta}
+          onPress={() => setScanModalVisible(true)}
+          activeOpacity={0.85}
+        >
+          <View style={styles.scanCtaIcon}>
+            <Ionicons name="scan-outline" size={22} color={colors.textInverse} />
+          </View>
+          <View style={styles.scanCtaTextWrap}>
+            <Text style={styles.scanCtaTitle}>Fotoğrafla Otomatik Doldur</Text>
+            <Text style={styles.scanCtaSubtitle}>
+              Kimliğin arka yüzünü kameraya tutun — MRZ otomatik okunur
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textInverse} />
+        </TouchableOpacity>
+
+        <View style={styles.scanDividerRow}>
+          <View style={styles.scanDividerLine} />
+          <Text style={styles.scanDividerText}>veya elle girin</Text>
+          <View style={styles.scanDividerLine} />
+        </View>
 
         {/* Visual guide for MRZ */}
         <View style={styles.mrzGuide}>
@@ -554,7 +576,7 @@ export default function VerificationScreen({ navigation, route }) {
         <Button
           title="NFC Taramaya Geç"
           variant="accent"
-          onPress={() => setCurrentStep(3)}
+          onPress={() => setCurrentStep(1)}
           disabled={!isDataValid}
           fullWidth
           style={styles.nextButton}
@@ -640,9 +662,29 @@ export default function VerificationScreen({ navigation, route }) {
           </View>
         ) : null}
 
-        {/* Scan button */}
+        {/* Submission progress (visible during retry backoff) */}
+        {isSubmitting && submitProgress ? (
+          <View style={styles.infoBox}>
+            <ActivityIndicator size="small" color={colors.info} />
+            <Text style={styles.infoText}>{submitProgress}</Text>
+          </View>
+        ) : null}
+
+        {/* Persistent manual retry — appears only after auto-submit has
+            exhausted all backoff attempts. Reuses cached NFC result so
+            the user does NOT have to rescan the physical card. */}
+        {submitFailed && nfcResult ? (
+          <View style={styles.retryBox}>
+            <Ionicons name="refresh-circle-outline" size={18} color={colors.warning || '#B45309'} />
+            <Text style={styles.retryText}>
+              Sunucuya bağlanılamadı. NFC okuması hafızada — kartı tekrar okutmaya gerek yok.
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Primary scan button */}
         <Button
-          title={isSubmitting ? 'Doğrulanıyor...' : stateLabels[nfcState]}
+          title={isSubmitting ? (submitProgress || 'Doğrulanıyor...') : stateLabels[nfcState]}
           variant={nfcState === 'success' ? 'primary' : 'accent'}
           onPress={nfcState === 'scanning' || isSubmitting ? undefined : handleNfcScan}
           loading={nfcState === 'scanning' || isSubmitting}
@@ -654,6 +696,19 @@ export default function VerificationScreen({ navigation, route }) {
               : <Ionicons name="wifi-outline" size={20} color={colors.textInverse} style={{ transform: [{ rotate: '90deg' }] }} />
           }
         />
+
+        {/* Manual resubmit — shown when a previous auto-submit failed and
+            we have cached NFC data. Clicking it retries the backoff loop. */}
+        {submitFailed && nfcResult && !isSubmitting ? (
+          <Button
+            title="Sunucuya Gönder (Tekrar Dene)"
+            variant="primary"
+            onPress={handleManualResubmit}
+            fullWidth
+            style={styles.resubmitButton}
+            icon={<Ionicons name="cloud-upload-outline" size={18} color={colors.textInverse} />}
+          />
+        ) : null}
 
         {!NFC_AVAILABLE && (
           <Text style={styles.nfcWarning}>
@@ -722,25 +777,13 @@ export default function VerificationScreen({ navigation, route }) {
                 <View style={styles.processStep}>
                   <View style={[styles.processStepDot, currentStep >= 0 && styles.processStepDotActive]} />
                   <Text style={[styles.processStepText, currentStep === 0 && styles.processStepTextActive]}>
-                    1. Kimlik ön yüz fotoğrafı
+                    1. Belge bilgilerini girin (MRZ)
                   </Text>
                 </View>
                 <View style={styles.processStep}>
                   <View style={[styles.processStepDot, currentStep >= 1 && styles.processStepDotActive]} />
                   <Text style={[styles.processStepText, currentStep === 1 && styles.processStepTextActive]}>
-                    2. Kimlik arka yüz fotoğrafı (MRZ)
-                  </Text>
-                </View>
-                <View style={styles.processStep}>
-                  <View style={[styles.processStepDot, currentStep >= 2 && styles.processStepDotActive]} />
-                  <Text style={[styles.processStepText, currentStep === 2 && styles.processStepTextActive]}>
-                    3. Belge bilgilerini girin/onaylayın
-                  </Text>
-                </View>
-                <View style={styles.processStep}>
-                  <View style={[styles.processStepDot, currentStep >= 3 && styles.processStepDotActive]} />
-                  <Text style={[styles.processStepText, currentStep === 3 && styles.processStepTextActive]}>
-                    4. NFC ile çip okuma ve doğrulama
+                    2. NFC ile çip okuma ve doğrulama
                   </Text>
                 </View>
               </View>
@@ -748,10 +791,8 @@ export default function VerificationScreen({ navigation, route }) {
 
             <StepIndicator currentStep={currentStep} steps={STEPS} />
 
-            {currentStep === 0 && renderFrontCameraStep()}
-            {currentStep === 1 && renderBackCameraStep()}
-            {currentStep === 2 && renderDataEntryStep()}
-            {currentStep === 3 && renderNfcStep()}
+            {currentStep === 0 && renderDataEntryStep()}
+            {currentStep === 1 && renderNfcStep()}
 
             {renderNavButtons()}
           </>
@@ -766,6 +807,14 @@ export default function VerificationScreen({ navigation, route }) {
           </Text>
         </View>
       </ScrollView>
+
+      {/* MRZ OCR scan modal — auto-scans with the camera, returns parsed
+          TD1 lines, then auto-advances to the NFC step. */}
+      <MrzScanModal
+        visible={scanModalVisible}
+        onClose={() => setScanModalVisible(false)}
+        onResult={handleMrzScanResult}
+      />
     </ScreenWrapper>
   );
 }
@@ -855,6 +904,52 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body, fontSize: 13, color: colors.textMuted,
     textAlign: 'center', marginTop: 12, lineHeight: 20,
   },
+
+  // OCR scan CTA
+  scanCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.accent,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: radius.md,
+    marginBottom: 14,
+  },
+  scanCtaIcon: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  scanCtaTextWrap: { flex: 1 },
+  scanCtaTitle: {
+    fontFamily: fonts.bodySemiBold, fontSize: 14, color: colors.textInverse,
+  },
+  scanCtaSubtitle: {
+    fontFamily: fonts.body, fontSize: 11, color: 'rgba(255,255,255,0.88)',
+    marginTop: 2,
+  },
+  scanDividerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10,
+  },
+  scanDividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  scanDividerText: {
+    fontFamily: fonts.body, fontSize: 11, color: colors.textMuted,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+
+  // Manual resubmit
+  retryBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: '#FEF3C7',
+    padding: 12, borderRadius: radius.md,
+    marginBottom: 12, alignSelf: 'stretch',
+  },
+  retryText: {
+    fontFamily: fonts.body, fontSize: 12, color: '#92400E',
+    flex: 1, lineHeight: 18,
+  },
+  resubmitButton: { alignSelf: 'stretch', marginTop: 10 },
 
   // Data entry
   mrzGuide: { marginBottom: 16 },

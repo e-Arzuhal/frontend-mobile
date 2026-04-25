@@ -107,10 +107,12 @@ function deriveKey(Kseed, counter) {
 
 // ─── 3DES Encryption/Decryption ─────────────────────────────────────────────
 
+const ZERO_IV = new Array(8).fill(0);
+
 function des3Encrypt(key, data, iv = null) {
   const keyWA = bytesToWordArray(key);
   const dataWA = bytesToWordArray(data);
-  const ivWA = iv ? bytesToWordArray(iv) : CryptoJS.lib.WordArray.create(new Uint8Array(8));
+  const ivWA = bytesToWordArray(iv || ZERO_IV);
 
   const encrypted = CryptoJS.TripleDES.encrypt(dataWA, keyWA, {
     iv: ivWA,
@@ -122,7 +124,7 @@ function des3Encrypt(key, data, iv = null) {
 
 function des3Decrypt(key, data, iv = null) {
   const keyWA = bytesToWordArray(key);
-  const ivWA = iv ? bytesToWordArray(iv) : CryptoJS.lib.WordArray.create(new Uint8Array(8));
+  const ivWA = bytesToWordArray(iv || ZERO_IV);
 
   const cipherParams = CryptoJS.lib.CipherParams.create({
     ciphertext: bytesToWordArray(data),
@@ -138,7 +140,7 @@ function des3Decrypt(key, data, iv = null) {
 function desEncryptSingle(key8, block8) {
   const keyWA = bytesToWordArray(key8);
   const dataWA = bytesToWordArray(block8);
-  const ivWA = CryptoJS.lib.WordArray.create(new Uint8Array(8));
+  const ivWA = bytesToWordArray(ZERO_IV);
 
   const encrypted = CryptoJS.DES.encrypt(dataWA, keyWA, {
     iv: ivWA,
@@ -150,7 +152,7 @@ function desEncryptSingle(key8, block8) {
 
 function desDecryptSingle(key8, block8) {
   const keyWA = bytesToWordArray(key8);
-  const ivWA = CryptoJS.lib.WordArray.create(new Uint8Array(8));
+  const ivWA = bytesToWordArray(ZERO_IV);
 
   const cipherParams = CryptoJS.lib.CipherParams.create({
     ciphertext: bytesToWordArray(block8),
@@ -161,6 +163,20 @@ function desDecryptSingle(key8, block8) {
     padding: CryptoJS.pad.NoPadding,
   });
   return wordArrayToBytes(decrypted);
+}
+
+/**
+ * ICAO 9303 Part 11: IV selection for Secure Messaging encryption.
+ *
+ *   - BAC-SM (3DES-CBC): IV = 0x00..00 (zero IV). SSC does NOT participate
+ *     in the encryption IV — it only participates in the MAC input.
+ *   - PACE-SM (AES-CBC): IV = E(KSenc, SSC).
+ *
+ * Since this module implements BAC (3DES), we use a zero IV.
+ * (Using E(KSenc, SSC) here causes the chip to return SW=6988.)
+ */
+function computeEncIV(_KSenc, _ssc) {
+  return ZERO_IV;
 }
 
 // ─── Retail MAC (ISO 9797-1 Algorithm 3, Padding Method 2) ─────────────────
@@ -246,14 +262,17 @@ function buildSecureApdu(apdu, KSenc, KSmac, ssc) {
     }
   }
 
-  // Increment SSC
+  // Increment SSC for this command
   ssc = incrementSSC(ssc);
+
+  // ICAO 9303: IV = E(KSenc, SSC)
+  const encIV = computeEncIV(KSenc, ssc);
 
   // Build DO'87 (encrypted data) if command has data
   let do87 = [];
   if (cmdData && cmdData.length > 0) {
-    const paddedData = padData(cmdData);
-    const encData = des3Encrypt(KSenc, paddedData, ssc);
+    const paddedCmdData = padData(cmdData);
+    const encData = des3Encrypt(KSenc, paddedCmdData, encIV);
     // TLV: 87 + length + 01 (padding indicator) + encrypted data
     const do87Data = [0x01, ...encData];
     do87 = [0x87, ...encodeTlvLength(do87Data.length), ...do87Data];
@@ -265,23 +284,19 @@ function buildSecureApdu(apdu, KSenc, KSmac, ssc) {
     do97 = [0x97, 0x01, le];
   }
 
-  // Build MAC: header + DO87 + DO97
+  // Build MAC input: SSC || padded(CmdHeader) || DO'87 || DO'97
   const paddedHeader = padData([cla, ins, p1, p2]);
-  const macInput = [...ssc, ...paddedHeader, ...do87, ...do97];
-  const paddedMacInput = padData(macInput.length % 8 === 0 ? macInput : macInput);
-  // Actually, we need to pad the concatenation of SSC + padded header + DO87 + DO97
-  const N = [...ssc, ...paddedHeader];
-  let macData = [...N];
+  let macData = [...ssc, ...paddedHeader];
   if (do87.length > 0) macData.push(...do87);
   if (do97.length > 0) macData.push(...do97);
-  // Pad the whole thing
-  const macDataPadded = padData(macData);
-  const mac = retailMac(KSmac, macDataPadded.length > 0 ? macData : []);
+
+  // Compute retail MAC (padding method 2 applied inside retailMac)
+  const mac = retailMac(KSmac, macData);
 
   // Build DO'8E (MAC)
   const do8e = [0x8e, 0x08, ...mac];
 
-  // Build final APDU
+  // Build final secure APDU
   const secData = [...do87, ...do97, ...do8e];
   const finalApdu = [cla, ins, p1, p2, secData.length, ...secData, 0x00];
 
@@ -315,12 +330,15 @@ function verifyAndDecryptResponse(response, KSenc, KSmac, ssc) {
     else if (tag === 0x8e) do8eData = value;
   }
 
+  // ICAO 9303: IV = E(KSenc, SSC)
+  const encIV = computeEncIV(KSenc, ssc);
+
   // Decrypt DO87 if present
   let decryptedData = null;
   if (do87Data && do87Data.length > 1) {
     // Skip padding indicator byte (0x01)
     const encData = do87Data.slice(1);
-    const paddedDecrypted = des3Decrypt(KSenc, encData, ssc);
+    const paddedDecrypted = des3Decrypt(KSenc, encData, encIV);
     decryptedData = unpadData(paddedDecrypted);
   }
 
@@ -397,7 +415,7 @@ export function parseDG1(data) {
 /**
  * Perform BAC authentication and read DG1 from a TC Kimlik Kartı.
  *
- * @param {object} nfcManager - NfcManager instance
+ * @param {Function} transceive - Function to send APDU and receive response
  * @param {string} bacInputString - MRZ info string for key derivation
  *   Format: docNo(9) + check(1) + DOB(6) + check(1) + expiry(6) + check(1)
  * @returns {object} - Parsed personal data from DG1
@@ -412,14 +430,14 @@ export async function readMrtdData(transceive, bacInputString) {
   const selectResp = await transceive(selectAid);
   const selectSw = (selectResp[selectResp.length - 2] << 8) | selectResp[selectResp.length - 1];
   if (selectSw !== 0x9000 && selectSw !== 0x6a82) {
-    throw new Error(`eMRTD application select failed: ${selectSw.toString(16)}`);
+    throw new Error(`eMRTD uygulama seçimi başarısız: ${selectSw.toString(16)}`);
   }
 
   // Step 3: GET CHALLENGE - get random nonce from chip
   const getChallenge = [0x00, 0x84, 0x00, 0x00, 0x08];
   const challengeResp = await transceive(getChallenge);
   if (challengeResp.length < 10) {
-    throw new Error('GET CHALLENGE response too short');
+    throw new Error('GET CHALLENGE yanıtı çok kısa');
   }
   const RND_IC = challengeResp.slice(0, 8);
 
@@ -442,7 +460,7 @@ export async function readMrtdData(transceive, bacInputString) {
   const mutAuthResp = await transceive(mutAuth);
 
   if (mutAuthResp.length < 42) {
-    throw new Error('MUTUAL AUTHENTICATE failed - kart okunamadı. BAC anahtarları doğru mu?');
+    throw new Error('BAC doğrulaması başarısız — belge numarası, doğum tarihi veya son kullanma tarihi yanlış olabilir.');
   }
 
   // Decrypt response
@@ -463,7 +481,7 @@ export async function readMrtdData(transceive, bacInputString) {
 
   // Verify RND_IFD matches
   if (bytesToHex(RND_IFD_received) !== bytesToHex(RND_IFD)) {
-    throw new Error('BAC doğrulaması başarısız - RND_IFD eşleşmiyor.');
+    throw new Error('BAC doğrulaması başarısız — RND_IFD eşleşmiyor.');
   }
 
   // Step 5: Derive session keys
@@ -476,13 +494,25 @@ export async function readMrtdData(transceive, bacInputString) {
 
   // Step 6: Select DG1 with secure messaging
   // SELECT EF.DG1: file ID 0x0101
-  const selectDG1 = buildApdu(0x00, 0xa4, 0x02, 0x0c, [0x01, 0x01]);
+  // NOTE: ICAO 9303 / many MRTD chips require Le=0x00 on SM-wrapped commands
+  // so that DO'97 is present in the envelope. Without it, the chip returns
+  // SW=6988 ("Incorrect data objects in SM"). Make this Case 4 with Le=0.
+  const selectDG1 = buildApdu(0x00, 0xa4, 0x02, 0x0c, [0x01, 0x01], 0x00);
   const secSelectDG1 = buildSecureApdu(selectDG1, KSenc, KSmac, ssc);
   ssc = secSelectDG1.ssc;
 
   const selectDG1Resp = await transceive(secSelectDG1.apdu);
-  // Don't strictly parse this response - just update SSC
+
+  // Check SELECT DG1 response status
+  const selSw1 = selectDG1Resp[selectDG1Resp.length - 2];
+  const selSw2 = selectDG1Resp[selectDG1Resp.length - 1];
+  const selSw = (selSw1 << 8) | selSw2;
+  // Increment SSC for response
   ssc = incrementSSC(ssc);
+
+  if (selSw !== 0x9000) {
+    throw new Error(`DG1 dosya seçimi başarısız (SW: ${selSw.toString(16)}). Güvenli mesajlaşma hatası olabilir.`);
+  }
 
   // Step 7: Read DG1 - first read header to get total length
   const readHeader = buildApdu(0x00, 0xb0, 0x00, 0x00, null, 0x04);
@@ -494,7 +524,9 @@ export async function readMrtdData(transceive, bacInputString) {
   ssc = headerResult.ssc;
 
   if (!headerResult.data || headerResult.data.length < 2) {
-    throw new Error('DG1 header okunamadı.');
+    // Provide detailed error with status word info
+    const hSw = (headerResult.sw1 << 8) | headerResult.sw2;
+    throw new Error(`DG1 header okunamadı (SW: ${hSw.toString(16)}). Kartı sabit tuttuğunuzdan emin olun.`);
   }
 
   // Parse TLV to get total DG1 length
