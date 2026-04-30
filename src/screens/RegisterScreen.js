@@ -76,7 +76,7 @@ export default function RegisterScreen({ navigation }) {
         </View>
 
         <View style={[styles.card, shadows.md]}>
-          <Text style={styles.cardTitle}>Kayıt Ol</Text>
+          <Text style={styles.cardTitle}>Kaydolun</Text>
 
           <View style={styles.row}>
             <Input
@@ -139,7 +139,7 @@ export default function RegisterScreen({ navigation }) {
           />
 
           <Button
-            title="Kayıt Ol"
+            title="Kaydolun"
             onPress={handleRegister}
             loading={loading}
             fullWidth

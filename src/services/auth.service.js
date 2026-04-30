@@ -19,8 +19,12 @@ class AuthService {
     return response;
   }
 
-  async login(usernameOrEmail, password) {
-    const response = await api.post('/api/auth/login', { usernameOrEmail, password });
+  async login(usernameOrEmail, password, twoFactorCode) {
+    const response = await api.post('/api/auth/login', {
+      usernameOrEmail,
+      password,
+      twoFactorCode: twoFactorCode || null,
+    });
 
     if (response.accessToken) {
       await SecureStore.setItemAsync('authToken', response.accessToken);
@@ -33,6 +37,26 @@ class AuthService {
   async logout() {
     await SecureStore.deleteItemAsync('authToken');
     await SecureStore.deleteItemAsync('user');
+  }
+
+  /** E-posta'ya 6 haneli şifre sıfırlama kodu gönderme talebi. */
+  async requestPasswordReset(email) {
+    return api.post('/api/auth/forgot-password', { email });
+  }
+
+  /** E-posta + kod ile yeni şifre belirleme. */
+  async confirmPasswordReset(email, code, newPassword) {
+    return api.post('/api/auth/reset-password', { email, code, newPassword });
+  }
+
+  /** Authenticated kullanıcıya 2FA kodu (enable/disable) e-postaya gönder. */
+  async send2faCode(action = 'enable') {
+    return api.post(`/api/auth/2fa/send?action=${encodeURIComponent(action)}`);
+  }
+
+  /** 2FA kodunu doğrula ve enable/disable işlemini sunucuda kalıcı yap. */
+  async verify2faCode(code, action = 'enable') {
+    return api.post('/api/auth/2fa/verify', { code, action });
   }
 
   async isAuthenticated() {

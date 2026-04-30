@@ -13,6 +13,8 @@ const contractService = {
   getStats: () => api.get('/api/contracts/stats'),
   approve: (id) => api.post(`/api/contracts/${id}/approve`),
   reject: (id) => api.post(`/api/contracts/${id}/reject`),
+  /** GraphRAG'den sözleşme tipine göre zorunlu/opsiyonel madde rehberi. */
+  getRequiredClauses: (id) => api.get(`/api/contracts/${id}/required-clauses`),
 };
 
 export default contractService;
