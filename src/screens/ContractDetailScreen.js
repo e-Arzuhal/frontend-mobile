@@ -43,9 +43,12 @@ export default function ContractDetailScreen({ route, navigation }) {
   const [contract, setContract] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [requiredClauses, setRequiredClauses] = useState(null);
+  const [loadingClauses, setLoadingClauses] = useState(false);
 
   useEffect(() => {
     loadContract();
+    loadRequiredClauses();
   }, [contractId]);
 
   const loadContract = async () => {
@@ -57,6 +60,18 @@ export default function ContractDetailScreen({ route, navigation }) {
       navigation.goBack();
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadRequiredClauses = async () => {
+    setLoadingClauses(true);
+    try {
+      const data = await contractService.getRequiredClauses(contractId);
+      setRequiredClauses(data);
+    } catch {
+      setRequiredClauses(null);
+    } finally {
+      setLoadingClauses(false);
     }
   };
 
@@ -172,7 +187,9 @@ export default function ContractDetailScreen({ route, navigation }) {
         <View style={styles.partyCard}>
           <Ionicons name="person" size={20} color={colors.primary} />
           <View style={styles.partyInfo}>
-            <Text style={styles.partyName}>{contract.ownerUsername || 'Siz'}</Text>
+            <Text style={styles.partyName}>
+              {contract.ownerFullName || contract.ownerUsername || 'Siz'}
+            </Text>
             <Text style={styles.partyRole}>Sözleşme Sahibi</Text>
           </View>
         </View>
@@ -193,6 +210,72 @@ export default function ContractDetailScreen({ route, navigation }) {
           <Text style={styles.contentText}>{contract.content}</Text>
         </Card>
       )}
+
+      <Card style={styles.section}>
+        <View style={styles.clausesHeaderRow}>
+          <Text style={styles.sectionTitle}>Bulunması Gereken Maddeler</Text>
+          <Text style={styles.clausesSourceText}>GraphRAG</Text>
+        </View>
+        {loadingClauses && (
+          <Text style={styles.mutedText}>Madde rehberi yükleniyor...</Text>
+        )}
+        {!loadingClauses && requiredClauses && requiredClauses.available === false && (
+          <Text style={styles.mutedText}>
+            {requiredClauses.message || 'Madde rehberi şu anda erişilemiyor.'}
+          </Text>
+        )}
+        {!loadingClauses && requiredClauses && requiredClauses.available !== false && (
+          <View>
+            <Text style={styles.clauseGroupTitle}>Zorunlu Maddeler</Text>
+            {(requiredClauses.mandatoryClauses || []).length === 0 ? (
+              <Text style={styles.mutedText}>Tanımlı zorunlu madde bulunamadı.</Text>
+            ) : (
+              (requiredClauses.mandatoryClauses || []).map((c, i) => (
+                <View key={`m-${i}`} style={[styles.clauseRow, styles.clauseRowMandatory]}>
+                  <Text style={styles.clauseName}>{c.name || c.clause || `Madde ${i + 1}`}</Text>
+                  {!!c.description && (
+                    <Text style={styles.clauseDescription}>{c.description}</Text>
+                  )}
+                </View>
+              ))
+            )}
+
+            {(requiredClauses.optionalClauses || []).length > 0 && (
+              <>
+                <Text style={[styles.clauseGroupTitle, { marginTop: 14 }]}>
+                  Opsiyonel Maddeler
+                </Text>
+                {(requiredClauses.optionalClauses || []).map((c, i) => (
+                  <View key={`o-${i}`} style={styles.clauseRow}>
+                    <Text style={styles.clauseName}>{c.name || c.clause || `Madde ${i + 1}`}</Text>
+                    {!!c.description && (
+                      <Text style={styles.clauseDescription}>{c.description}</Text>
+                    )}
+                  </View>
+                ))}
+              </>
+            )}
+
+            {(requiredClauses.lawArticles || []).length > 0 && (
+              <>
+                <Text style={[styles.clauseGroupTitle, { marginTop: 14 }]}>
+                  İlgili Kanun Maddeleri
+                </Text>
+                {(requiredClauses.lawArticles || []).slice(0, 6).map((a, i) => (
+                  <View key={`l-${i}`} style={styles.clauseRow}>
+                    <Text style={styles.clauseName}>
+                      {(a.law_name || '') + ' ' + (a.article_number || '')}
+                    </Text>
+                    {!!a.summary && (
+                      <Text style={styles.clauseDescription}>{a.summary}</Text>
+                    )}
+                  </View>
+                ))}
+              </>
+            )}
+          </View>
+        )}
+      </Card>
 
       {contract.status === 'DRAFT' && (
         <View style={styles.actions}>
@@ -310,5 +393,48 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
+  },
+  clausesHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 4,
+  },
+  clausesSourceText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  clauseGroupTitle: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 13,
+    color: colors.text,
+    marginBottom: 8,
+  },
+  clauseRow: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    padding: 10,
+    marginBottom: 6,
+  },
+  clauseRowMandatory: {
+    backgroundColor: 'rgba(34, 139, 34, 0.08)',
+  },
+  clauseName: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 13,
+    color: colors.text,
+  },
+  clauseDescription: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 4,
+    lineHeight: 17,
+  },
+  mutedText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textMuted,
   },
 });

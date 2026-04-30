@@ -154,7 +154,7 @@ export default function ApprovalsScreen() {
           <View style={styles.cardMeta}>
             <Text style={styles.metaText}>
               <Ionicons name="person-outline" size={12} color={colors.textMuted} />
-              {' '}{item.ownerUsername || 'Bilinmiyor'}
+              {' '}{item.ownerFullName || item.ownerUsername || 'Bilinmiyor'}
             </Text>
             <Text style={styles.metaText}>
               <Ionicons name="calendar-outline" size={12} color={colors.textMuted} />

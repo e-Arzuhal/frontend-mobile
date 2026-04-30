@@ -14,6 +14,7 @@ export default function Input({
   icon,
   editable = true,
   style,
+  maxLength,
 }) {
   const [focused, setFocused] = useState(false);
 
@@ -38,6 +39,7 @@ export default function Input({
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
           editable={editable}
+          maxLength={maxLength}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           style={[styles.input, icon && styles.inputWithIcon]}

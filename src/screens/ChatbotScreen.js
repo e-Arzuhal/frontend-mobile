@@ -37,6 +37,9 @@ export default function ChatbotScreen() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [suggested, setSuggested] = useState(SUGGESTED_INITIAL);
+  const [contractOptions, setContractOptions] = useState([]);
+  const [selectedContractId, setSelectedContractId] = useState(null);
+  const [pendingMessage, setPendingMessage] = useState('');
   const flatListRef = useRef(null);
 
   /* ── Voice-to-Text ── */
@@ -63,25 +66,35 @@ export default function ChatbotScreen() {
   const getHistory = () =>
     messages.map((m) => ({ role: m.role, content: m.content }));
 
-  const send = async (text) => {
-    const trimmed = text.trim();
+  const send = async (text, opts = {}) => {
+    const trimmed = (text ?? '').trim();
+    const contractId = opts.contractId ?? selectedContractId;
+    const skipUserBubble = opts.skipUserBubble === true;
     if (!trimmed || loading) return;
 
-    const userMsg = { id: String(Date.now()), role: 'user', content: trimmed };
-    setMessages((prev) => [...prev, userMsg]);
+    if (!skipUserBubble) {
+      setMessages((prev) => [...prev, { id: String(Date.now()), role: 'user', content: trimmed }]);
+    }
     setInput('');
     setSuggested([]);
+    setContractOptions([]);
     setLoading(true);
 
     try {
-      const res = await chatbotService.sendMessage(trimmed, getHistory());
+      const res = await chatbotService.sendMessage(trimmed, getHistory(), contractId || null);
       const botMsg = {
         id: String(Date.now() + 1),
         role: 'assistant',
         content: res.response,
       };
       setMessages((prev) => [...prev, botMsg]);
-      if (res.suggestedQuestions?.length) setSuggested(res.suggestedQuestions);
+
+      if (res.requiresContractSelection && Array.isArray(res.contractOptions) && res.contractOptions.length) {
+        setContractOptions(res.contractOptions);
+        setPendingMessage(trimmed);
+      } else if (res.suggestedQuestions?.length) {
+        setSuggested(res.suggestedQuestions);
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -93,6 +106,18 @@ export default function ChatbotScreen() {
       ]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const pickContract = async (option) => {
+    setSelectedContractId(option.id);
+    const labelText = `Seçilen sözleşme: ${option.title || `#${option.id}`}`;
+    setMessages((prev) => [...prev, { id: String(Date.now()), role: 'user', content: labelText }]);
+    setContractOptions([]);
+    if (pendingMessage) {
+      const msg = pendingMessage;
+      setPendingMessage('');
+      await send(msg, { contractId: option.id, skipUserBubble: true });
     }
   };
 
@@ -145,8 +170,37 @@ export default function ChatbotScreen() {
           }
         />
 
+        {/* Sözleşme Seçimi */}
+        {contractOptions.length > 0 && !loading && (
+          <View style={styles.contractsBlock}>
+            <Text style={styles.contractsLabel}>
+              Hangi sözleşme hakkında konuşalım?
+            </Text>
+            <ScrollView
+              style={{ maxHeight: 180 }}
+              contentContainerStyle={{ gap: 6 }}
+            >
+              {contractOptions.map((opt) => (
+                <TouchableOpacity
+                  key={opt.id}
+                  style={styles.contractOption}
+                  onPress={() => pickContract(opt)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.contractOptionTitle}>
+                    {opt.title || `Sözleşme #${opt.id}`}
+                  </Text>
+                  <Text style={styles.contractOptionSubtitle}>
+                    {(opt.type || 'Sözleşme') + ' · ' + (opt.status || '')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Önerilen Sorular */}
-        {suggested.length > 0 && !loading && (
+        {suggested.length > 0 && !loading && contractOptions.length === 0 && (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -347,5 +401,37 @@ const styles = StyleSheet.create({
   },
   micButtonActive: {
     backgroundColor: '#ef4444',
+  },
+  contractsBlock: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  contractsLabel: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+    marginBottom: 6,
+  },
+  contractOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  contractOptionTitle: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 13,
+    color: colors.text,
+  },
+  contractOptionSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
   },
 });
