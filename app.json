@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "frontend-mobile",
+    "name": "e-Arzuhal",
     "slug": "frontend-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/e-Arzuhal-logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -25,7 +25,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/e-Arzuhal-logo.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -37,7 +37,7 @@
       "package": "com.anonymous.frontendmobile"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/e-Arzuhal-logo.png"
     },
     "plugins": [
       "./plugins/withAndroidCleartext",
