@@ -73,8 +73,8 @@ export default function SettingsScreen({ navigation }) {
       Alert.alert('Hata', 'Tüm şifre alanlarını doldurun.');
       return;
     }
-    if (passwordForm.newPass.length < 6) {
-      Alert.alert('Hata', 'Yeni şifre en az 6 karakter olmalı.');
+    if (passwordForm.newPass.length < 8) {
+      Alert.alert('Hata', 'Yeni şifre en az 8 karakter olmalı.');
       return;
     }
     if (passwordForm.newPass !== passwordForm.confirm) {
