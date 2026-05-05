@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,7 +21,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
 
 import { colors, fonts } from './src/styles/tokens';
-import authService from './src/services/auth.service';
+import authService, { setOnLogout } from './src/services/auth.service';
 import { setOnUnauthorized } from './src/services/api.service';
 import pushNotificationService from './src/services/pushNotification.service';
 import DisclaimerModal, { checkDisclaimerAccepted } from './src/components/DisclaimerModal';
@@ -36,8 +36,12 @@ import ApprovalsScreen from './src/screens/ApprovalsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import VerificationScreen from './src/screens/VerificationScreen';
 import ChatbotScreen from './src/screens/ChatbotScreen';
+import NotificationsScreen from './src/screens/NotificationsScreen';
 
 SplashScreen.preventAutoHideAsync();
+
+// Push bildirim tıklamalarında deep link için navigation referansı
+const navigationRef = createNavigationContainerRef();
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -83,6 +87,9 @@ function MainTabs() {
               break;
             case 'Approvals':
               iconName = focused ? 'checkmark-done-circle' : 'checkmark-done-circle-outline';
+              break;
+            case 'Notifications':
+              iconName = focused ? 'notifications' : 'notifications-outline';
               break;
             case 'Chatbot':
               iconName = focused ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline';
@@ -130,6 +137,11 @@ function MainTabs() {
         options={{ tabBarLabel: 'Onaylar' }}
       />
       <Tab.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ tabBarLabel: 'Bildirim' }}
+      />
+      <Tab.Screen
         name="Chatbot"
         component={ChatbotScreen}
         options={{ tabBarLabel: 'Asistan' }}
@@ -159,6 +171,8 @@ export default function App() {
   useEffect(() => {
     // 401 aldığında token temizlenmiş olur; buradan da state'i false'a çekeriz → Login ekranı
     setOnUnauthorized(() => setIsAuthenticated(false));
+    // "Çıkış Yap" tıklandığında da aynı şekilde Login ekranına dön
+    setOnLogout(() => setIsAuthenticated(false));
     checkAuth();
   }, []);
 
@@ -170,7 +184,7 @@ export default function App() {
           // device-token'i backend'e gondermiyoruz. Default: ON.
           const pushPref = await SecureStore.getItemAsync('notif:push');
           if (pushPref === 'false') return;
-          await pushNotificationService.registerForPushNotificationsAsync();
+          await pushNotificationService.registerForPushNotificationsAsync({ silent: true });
         } catch {
           // Push registration hatasi login akisini bloklamamali.
         }
@@ -178,6 +192,30 @@ export default function App() {
     };
 
     registerPush();
+
+    // Bildirim listener'ları — kullanıcı bildirime tıklayınca ilgili
+    // sözleşme detayına yönlendir. Yalnızca authenticated iken kayıtlı.
+    if (isAuthenticated) {
+      pushNotificationService.addListeners({
+        onResponse: (response) => {
+          const data = response?.notification?.request?.content?.data || {};
+          const contractId = data.contractId ? Number(data.contractId) : null;
+          if (contractId && navigationRef.isReady()) {
+            navigationRef.navigate('Main', {
+              screen: 'Contracts',
+              params: {
+                screen: 'ContractDetail',
+                params: { contractId },
+              },
+            });
+          }
+        },
+      });
+    }
+
+    return () => {
+      pushNotificationService.removeListeners();
+    };
   }, [isAuthenticated]);
 
   const checkAuth = async () => {
@@ -212,6 +250,7 @@ export default function App() {
           onAccepted={() => setShowDisclaimer(false)}
         />
         <NavigationContainer
+          ref={navigationRef}
           onStateChange={async () => {
             const auth = await authService.isAuthenticated();
             if (auth !== isAuthenticated) setIsAuthenticated(auth);

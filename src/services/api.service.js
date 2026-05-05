@@ -73,6 +73,10 @@ class ApiService {
   delete(endpoint, opts = {}) {
     return this.request(endpoint, { method: 'DELETE', ...opts });
   }
+
+  patch(endpoint, data = {}, opts = {}) {
+    return this.request(endpoint, { method: 'PATCH', body: JSON.stringify(data), ...opts });
+  }
 }
 
 const api = new ApiService();
