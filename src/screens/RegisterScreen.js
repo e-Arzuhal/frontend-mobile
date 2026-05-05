@@ -14,7 +14,7 @@ import { colors, fonts, radius, shadows } from '../styles/tokens';
 import Input from '../components/Input';
 import Button from '../components/Button';
 
-export default function RegisterScreen({ navigation }) {
+export default function RegisterScreen({ navigation, onLoginSuccess }) {
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -50,7 +50,19 @@ export default function RegisterScreen({ navigation }) {
     setLoading(true);
     try {
       const authService = require('../services/auth.service').default;
-      await authService.register(form);
+      const response = await authService.register(form);
+      // Backend kayit sonrasi accessToken donerse SecureStore'a yazilmis olur
+      // (auth.service.register icinde). onLoginSuccess() App.js'de
+      // isAuthenticated'i true yapar ve kullaniciyi otomatik ana ekrana atar.
+      if (response?.accessToken) {
+        onLoginSuccess && onLoginSuccess();
+        return;
+      }
+      // Eski/farkli backend davranisi: token donmediyse kullaniciyi
+      // login ekranina geri yonlendir.
+      Alert.alert('Kayıt Başarılı', 'Lütfen giriş yapın.', [
+        { text: 'Tamam', onPress: () => navigation.navigate('Login') },
+      ]);
     } catch (error) {
       Alert.alert('Kayıt Hatası', error.message || 'Kayıt yapılamadı.');
     } finally {

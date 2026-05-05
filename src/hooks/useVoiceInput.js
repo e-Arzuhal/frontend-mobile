@@ -1,8 +1,29 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import {
-  ExpoSpeechRecognitionModule,
-  useSpeechRecognitionEvent,
-} from 'expo-speech-recognition';
+
+// expo-speech-recognition is a native module. Its top-level
+// `requireNativeModule("ExpoSpeechRecognition")` call throws synchronously
+// at import time when the native module isn't registered (Expo Go, or a
+// build that hasn't picked up the autolinked module yet). A static `import`
+// would propagate that throw and crash any screen using this hook on mount.
+// Load it defensively instead so the screens still render and the mic UI
+// just hides itself when voice input isn't available.
+let ExpoSpeechRecognitionModule = null;
+let nativeUseSpeechRecognitionEvent = null;
+try {
+  const mod = require('expo-speech-recognition');
+  ExpoSpeechRecognitionModule = mod.ExpoSpeechRecognitionModule || null;
+  nativeUseSpeechRecognitionEvent = mod.useSpeechRecognitionEvent || null;
+} catch {
+  // Native module not linked into this build. Voice input stays disabled.
+}
+
+const SPEECH_AVAILABLE = !!(ExpoSpeechRecognitionModule && nativeUseSpeechRecognitionEvent);
+
+// Stable reference: chosen once at module load. Either the real hook (which
+// itself uses hooks internally) or a no-op. Either way the call site below
+// invokes the same function in the same order on every render, so React's
+// rules-of-hooks invariant is preserved across the component's lifetime.
+const useSpeechRecognitionEvent = nativeUseSpeechRecognitionEvent || (() => {});
 
 /**
  * React Native hook for voice-to-text using expo-speech-recognition.
@@ -24,10 +45,18 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
 
   // Cihazda speech recognition var mı kontrol et
   useEffect(() => {
+    if (!SPEECH_AVAILABLE) {
+      setIsAvailable(false);
+      return undefined;
+    }
     let cancelled = false;
-    ExpoSpeechRecognitionModule.isRecognitionAvailable()
-      .then((available) => { if (!cancelled) setIsAvailable(available); })
-      .catch(() => { if (!cancelled) setIsAvailable(false); });
+    try {
+      ExpoSpeechRecognitionModule.isRecognitionAvailable()
+        .then((available) => { if (!cancelled) setIsAvailable(available); })
+        .catch(() => { if (!cancelled) setIsAvailable(false); });
+    } catch {
+      setIsAvailable(false);
+    }
     return () => { cancelled = true; };
   }, []);
 
@@ -35,6 +64,7 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
   // bile native recognizer açık kalabilir (pil + privacy sorunu).
   useEffect(() => {
     return () => {
+      if (!SPEECH_AVAILABLE) return;
       try {
         ExpoSpeechRecognitionModule.stop();
       } catch {
@@ -43,7 +73,7 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
     };
   }, []);
 
-  // Event listeners
+  // Event listeners (no-op if module unavailable)
   useSpeechRecognitionEvent('result', (event) => {
     // Son final sonucu al
     if (event.isFinal && event.results?.length > 0) {
@@ -71,7 +101,7 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
   });
 
   const startListening = useCallback(async () => {
-    if (!isAvailable) return;
+    if (!SPEECH_AVAILABLE || !isAvailable) return;
 
     try {
       // İzin kontrolü
@@ -96,6 +126,7 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
   }, [isAvailable, lang]);
 
   const stopListening = useCallback(() => {
+    if (!SPEECH_AVAILABLE) return;
     try {
       ExpoSpeechRecognitionModule.stop();
     } catch {
