@@ -25,9 +25,10 @@ import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
 import { API_BASE_URL } from '../config/api.config';
 import useVoiceInput from '../hooks/useVoiceInput';
+import verificationService from '../services/verification.service';
 
 const TOTAL_STEPS = 4;
-const stepLabels = ['Metin Girişi', 'Sözleşme Önerisi', 'PDF Önizleme', 'Onay & İmza'];
+const stepLabels = ['Metin Girişi', 'Sözleşme Önerisi', 'Önizleme & Karşı Taraf', 'Tamamlandı'];
 
 const TYPE_LABELS = {
   SALES: 'Satış Sözleşmesi',
@@ -108,8 +109,19 @@ export default function CreateContractScreen({ navigation }) {
   const validateStep = () => {
     const e = {};
     if (currentStep === 0) {
-      if (!form.title.trim()) e.title = 'Başlık gerekli';
+      // Başlık artık otomatik olarak analiz sonucundan üretiliyor (web ile
+      // aynı davranış). Sadece sözleşme metni zorunlu.
       if (!form.content.trim()) e.content = 'Sözleşme metni gerekli';
+    }
+    if (currentStep === 2) {
+      // Önizleme adımında karşı taraf bilgisi de zorunlu — bu sayede
+      // backend `counterpartyTcKimlik` üzerinden onay akışını başlatabilir.
+      if (!form.counterpartyTcKimlik || form.counterpartyTcKimlik.length !== 11) {
+        e.counterpartyTcKimlik = 'Geçerli 11 haneli TC Kimlik No girin';
+      }
+      if (!form.counterpartyName.trim()) {
+        e.counterpartyName = 'Karşı tarafın adı soyadı gerekli';
+      }
     }
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -168,11 +180,66 @@ export default function CreateContractScreen({ navigation }) {
   };
 
   const handleSave = async () => {
+    if (!validateStep()) return;
     setSaving(true);
     try {
       const enrichedContent = getEnrichedContent();
-      const saved = await contractService.create({ ...form, content: enrichedContent });
-      setSavedContractId(saved?.id || null);
+      // Başlık: kullanıcı yazmadıysa analiz sonucundan otomatik türet
+      // (web frontendi de aynı pattern'i kullanıyor — bkz. CreateContractPage.jsx)
+      const autoTitle =
+        analysisResult?.contract_type_display ||
+        TYPE_LABELS[form.type] ||
+        TYPE_LABELS[analysisResult?.contract_type] ||
+        'Yeni Sözleşme';
+      const finalTitle = form.title.trim() || autoTitle;
+      const finalType =
+        form.type ||
+        analysisResult?.contract_type ||
+        'OTHER';
+      const saved = await contractService.create({
+        ...form,
+        title: finalTitle,
+        type: finalType,
+        content: enrichedContent,
+      });
+      const newId = saved?.id || null;
+      setSavedContractId(newId);
+
+      // ÖNEMLİ: "Onaya Gönder" butonu yalnızca create() çağırıyordu — bu da
+      // sözleşmeyi DRAFT durumunda bırakıyordu. Sonuç: karşı tarafın
+      // "Onaylar" listesi (status=PENDING filter) boş kalıyor ve kullanıcı
+      // sözleşmeyi onaylayamıyor. Burada create sonrası finalize() de çağrılır
+      // ki sözleşme PENDING'e geçsin ve karşı taraf onay listesinde görsün.
+      if (newId) {
+        try {
+          // Sahibin NFC ile doğrulanmış olması gerekir; backend bunu
+          // zorluyor. Önceden kontrol et ve kullanıcıya net mesaj göster.
+          const isVerified = await verificationService.isVerified();
+          if (!isVerified) {
+            // Kullanıcı henüz NFC doğrulaması yapmamış. Sözleşme DRAFT olarak
+            // kayıtlı kaldı; doğrulama sonrası ContractDetailScreen'den
+            // "Onaya Gönder" tekrar tıklanabilir.
+            Alert.alert(
+              'Kimlik Doğrulaması Gerekli',
+              'Sözleşme taslak olarak kaydedildi. Karşı tarafa onay gönderebilmek için Ayarlar > Kimlik Doğrulama ekranında NFC ile doğrulama yapmanız gerekiyor.'
+            );
+          } else {
+            await contractService.finalize(newId);
+          }
+        } catch (e) {
+          // Finalize başarısız oldu (NFC doğrulaması yok veya backend hatası).
+          // Sözleşme DRAFT olarak kayıtlı; kullanıcı detay ekranından
+          // tekrar deneyebilir.
+          console.warn('Finalize hatası:', e?.message);
+          Alert.alert(
+            'Bilgi',
+            'Sözleşme kaydedildi ancak onaya gönderilemedi: ' +
+              (e?.message || 'Bilinmeyen hata') +
+              '. Sözleşmelerim ekranından detaya gidip tekrar gönderebilirsiniz.'
+          );
+        }
+      }
+
       setCurrentStep(3);
     } catch (error) {
       Alert.alert('Hata', error.message || 'Sözleşme oluşturulamadı.');
@@ -200,14 +267,20 @@ export default function CreateContractScreen({ navigation }) {
   };
 
   const handleTcKimlikChange = async (value) => {
-    updateField('counterpartyTcKimlik', value);
+    // Android'in numeric keyboard'ı bazı cihazlarda harf de geçirebiliyor —
+    // burada zorla rakam dışındakileri sıyır ve 11 haneye kırp.
+    const digits = (value || '').replace(/\D/g, '').slice(0, 11);
+    updateField('counterpartyTcKimlik', digits);
     setTcLookupResult(null);
-    if (value.length === 11) {
+    if (digits.length === 11) {
       setTcLooking(true);
       try {
-        const result = await contractService.lookupUserByTc(value);
-        setTcLookupResult(result);
+        const result = await contractService.lookupUserByTc(digits);
+        setTcLookupResult(result || { found: false });
       } catch {
+        // Network / 401 / 5xx — kullanıcıyı oturumdan düşürmeden
+        // sessizce "bulunamadı" göster. (api.service.lookupUserByTc
+        // skipAuthHandler:true kullanıyor.)
         setTcLookupResult({ found: false });
       } finally {
         setTcLooking(false);
@@ -475,15 +548,8 @@ export default function CreateContractScreen({ navigation }) {
           <Card>
             <Text style={styles.stepTitle}>Sözleşmenizi Anlatın</Text>
             <Text style={styles.stepDescription}>
-              Ne tür bir sözleşmeye ihtiyacınız olduğunu doğal dilde yazın. Yapay zekamız türü ve detayları otomatik tespit edecek.
+              Ne tür bir sözleşmeye ihtiyacınız olduğunu doğal dilde yazın. Yapay zekamız türü, başlığı ve detayları otomatik tespit edecek.
             </Text>
-            <Input
-              label="Sözleşme Başlığı"
-              value={form.title}
-              onChangeText={(v) => updateField('title', v)}
-              placeholder="Ör: Kira Sözleşmesi - Nisan 2026"
-              error={errors.title}
-            />
             <TextArea
               label="Sözleşme Metni"
               value={form.content}
@@ -510,41 +576,75 @@ export default function CreateContractScreen({ navigation }) {
                 </Text>
               </TouchableOpacity>
             )}
-            <Input
-              label="Karşı Taraf TC Kimlik No (Opsiyonel)"
-              value={form.counterpartyTcKimlik}
-              onChangeText={handleTcKimlikChange}
-              placeholder="11 haneli TC Kimlik Numarası"
-              keyboardType="numeric"
-              maxLength={11}
-            />
-            {tcLooking && (
-              <View style={styles.tcLookupRow}>
-                <ActivityIndicator size="small" color={colors.accent} />
-                <Text style={styles.tcLookupText}>Kullanıcı aranıyor...</Text>
-              </View>
-            )}
-            {tcLookupResult && (
-              <View style={[styles.tcLookupRow, tcLookupResult.found ? styles.tcFound : styles.tcNotFound]}>
-                <Ionicons
-                  name={tcLookupResult.found ? 'checkmark-circle' : 'warning'}
-                  size={16}
-                  color={tcLookupResult.found ? colors.success : colors.warning}
-                />
-                <Text style={[styles.tcLookupText, { color: tcLookupResult.found ? colors.success : colors.warning }]}>
-                  {tcLookupResult.found
-                    ? `Kullanıcı bulundu: ${tcLookupResult.displayName}`
-                    : 'Bu TC Kimlik No\'ya ait kayıtlı kullanıcı bulunamadı. Onay gönderilemeyecek, ancak sözleşmeyi oluşturabilirsiniz.'}
-                </Text>
-              </View>
-            )}
           </Card>
         );
       case 1: return renderStep1();
-      case 2: return renderStep2();
+      case 2: return (
+        <>
+          {renderStep2()}
+          {renderCounterpartyCard()}
+        </>
+      );
       case 3: return renderStep3();
     }
   };
+
+  // Karşı taraf bilgi kartı — step 2'de PDF önizlemesinin altında, kayıt
+  // butonundan önce gösterilir. Web frontendi ile aynı pattern (bkz.
+  // CreateContractPage.jsx).
+  const renderCounterpartyCard = () => (
+    <Card style={styles.sectionCard}>
+      <View style={styles.sectionHeader}>
+        <Ionicons name="people-outline" size={19} color={colors.primary} />
+        <Text style={styles.sectionTitle}>Karşı Taraf Bilgileri</Text>
+      </View>
+      <Text style={styles.stepDescription}>
+        Onay sürecini başlatabilmek için sözleşmenin karşı tarafının kimliğini girin.
+      </Text>
+      <Input
+        label="Karşı Taraf TC Kimlik No"
+        value={form.counterpartyTcKimlik}
+        onChangeText={handleTcKimlikChange}
+        placeholder="11 haneli TC Kimlik Numarası"
+        keyboardType="numeric"
+        maxLength={11}
+        error={errors.counterpartyTcKimlik}
+      />
+      {tcLooking && (
+        <View style={styles.tcLookupRow}>
+          <ActivityIndicator size="small" color={colors.accent} />
+          <Text style={styles.tcLookupText}>Kullanıcı aranıyor...</Text>
+        </View>
+      )}
+      {tcLookupResult && (
+        <View style={[styles.tcLookupRow, tcLookupResult.found ? styles.tcFound : styles.tcNotFound]}>
+          <Ionicons
+            name={tcLookupResult.found ? 'checkmark-circle' : 'warning'}
+            size={16}
+            color={tcLookupResult.found ? colors.success : colors.warning}
+          />
+          <Text style={[styles.tcLookupText, { color: tcLookupResult.found ? colors.success : colors.warning }]}>
+            {tcLookupResult.found
+              ? `Kullanıcı bulundu: ${tcLookupResult.displayName}`
+              : 'Bu TC Kimlik No\'ya ait kayıtlı kullanıcı bulunamadı. Onay gönderilemeyecek; karşı taraf önce kayıt olmalı.'}
+          </Text>
+        </View>
+      )}
+      <Input
+        label="Ad Soyad"
+        value={form.counterpartyName}
+        onChangeText={(v) => updateField('counterpartyName', v)}
+        placeholder="Karşı tarafın adı ve soyadı"
+        error={errors.counterpartyName}
+      />
+      <Input
+        label="Rol (Opsiyonel)"
+        value={form.counterpartyRole}
+        onChangeText={(v) => updateField('counterpartyRole', v)}
+        placeholder="Ör: Kiracı, İşveren, Alıcı"
+      />
+    </Card>
+  );
 
   const isAnalyzingStep = currentStep === 1 && analyzing;
   const isLastStep = currentStep === TOTAL_STEPS - 1;

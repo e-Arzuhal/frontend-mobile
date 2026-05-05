@@ -16,20 +16,29 @@ class ApiService {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    // skipAuthHandler: 401 alındığında global oturum temizleme/Login yönlendirme
+    // tetiklenmesin. Sözleşme oluştururken TC kimlik lookup gibi yan akışlarda
+    // 401 (sunucu yanlış yapılandırılmışsa) kullanıcıyı form ortasında çıkışa
+    // zorlamaz; çağıran kod 401'i normal hata gibi yakalar.
+    const { skipAuthHandler, headers: customHeaders, ...fetchOpts } = options;
+    const headers = { 'Content-Type': 'application/json', ...customHeaders };
     const token = await SecureStore.getItemAsync('authToken');
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
     try {
-      const response = await fetch(url, { ...options, headers, signal: controller.signal });
+      const response = await fetch(url, { ...fetchOpts, headers, signal: controller.signal });
       clearTimeout(timeoutId);
 
       // Token süresi dolmuş veya geçersiz → oturumu temizle, login'e yönlendir
       if (response.status === 401) {
-        await SecureStore.deleteItemAsync('authToken');
-        await SecureStore.deleteItemAsync('user');
-        if (_onUnauthorized) _onUnauthorized();
-        throw new Error('Oturum süresi doldu. Lütfen tekrar giriş yapın.');
+        if (!skipAuthHandler) {
+          await SecureStore.deleteItemAsync('authToken');
+          await SecureStore.deleteItemAsync('user');
+          if (_onUnauthorized) _onUnauthorized();
+          throw new Error('Oturum süresi doldu. Lütfen tekrar giriş yapın.');
+        }
+        // skipAuthHandler senaryosu: çağıranın kararına bırak
+        throw new Error('HTTP 401');
       }
 
       const contentType = response.headers.get('content-type');
@@ -44,21 +53,21 @@ class ApiService {
     }
   }
 
-  get(endpoint, params = {}) {
+  get(endpoint, params = {}, opts = {}) {
     const query = new URLSearchParams(params).toString();
-    return this.request(query ? `${endpoint}?${query}` : endpoint, { method: 'GET' });
+    return this.request(query ? `${endpoint}?${query}` : endpoint, { method: 'GET', ...opts });
   }
 
-  post(endpoint, data = {}) {
-    return this.request(endpoint, { method: 'POST', body: JSON.stringify(data) });
+  post(endpoint, data = {}, opts = {}) {
+    return this.request(endpoint, { method: 'POST', body: JSON.stringify(data), ...opts });
   }
 
-  put(endpoint, data = {}) {
-    return this.request(endpoint, { method: 'PUT', body: JSON.stringify(data) });
+  put(endpoint, data = {}, opts = {}) {
+    return this.request(endpoint, { method: 'PUT', body: JSON.stringify(data), ...opts });
   }
 
-  delete(endpoint) {
-    return this.request(endpoint, { method: 'DELETE' });
+  delete(endpoint, opts = {}) {
+    return this.request(endpoint, { method: 'DELETE', ...opts });
   }
 }
 

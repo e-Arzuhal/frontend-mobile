@@ -6,16 +6,26 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 import { colors, fonts, radius, shadows } from '../styles/tokens';
 import Header from '../components/Header';
 import Card from '../components/Card';
 import Input from '../components/Input';
 import Button from '../components/Button';
 import authService from '../services/auth.service';
+import pushNotificationService from '../services/pushNotification.service';
 import ScreenWrapper from '../components/ScreenWrapper';
 import api from '../services/api.service';
+
+// SecureStore anahtarlari — App.js de "notif:push" anahtarini okuyor.
+const NOTIF_KEYS = {
+  email: 'notif:email',
+  push: 'notif:push',
+  approvals: 'notif:approvals',
+};
 
 const tabs = [
   { key: 'profile', label: 'Profil', icon: 'person-outline' },
@@ -30,9 +40,89 @@ export default function SettingsScreen({ navigation }) {
   const [passwordForm, setPasswordForm] = useState({ current: '', newPass: '', confirm: '' });
   const [saving, setSaving] = useState(false);
 
+  // Bildirim tercihleri — SecureStore'da string olarak saklaniyor
+  // ('true'/'false'). Default ON (yani 'false' acikca yazilmamissa true).
+  const [notifPrefs, setNotifPrefs] = useState({
+    email: true,
+    push: true,
+    approvals: true,
+  });
+
   useEffect(() => {
     loadUser();
+    loadNotifPrefs();
   }, []);
+
+  const loadNotifPrefs = async () => {
+    // Önce SecureStore'dan optimistik default — sonra backend'den senkronla.
+    // Backend down ise SecureStore son bilinen değeri sağlar.
+    try {
+      const [email, push, approvals] = await Promise.all([
+        SecureStore.getItemAsync(NOTIF_KEYS.email),
+        SecureStore.getItemAsync(NOTIF_KEYS.push),
+        SecureStore.getItemAsync(NOTIF_KEYS.approvals),
+      ]);
+      setNotifPrefs({
+        email: email !== 'false',
+        push: push !== 'false',
+        approvals: approvals !== 'false',
+      });
+    } catch {
+      // SecureStore okuma hatasi — defaultlari kullan
+    }
+    // Backend tercihlerini çek ve UI'yı senkronla.
+    try {
+      const remote = await api.get('/api/users/me/notification-preferences');
+      const next = {
+        email: remote.email !== false,
+        push: remote.push !== false,
+        approvals: remote.approvalRequests !== false,
+      };
+      setNotifPrefs(next);
+      // SecureStore'u backend ile senkronla — App.js push gating bu değeri okuyor
+      await Promise.all([
+        SecureStore.setItemAsync(NOTIF_KEYS.email, String(next.email)),
+        SecureStore.setItemAsync(NOTIF_KEYS.push, String(next.push)),
+        SecureStore.setItemAsync(NOTIF_KEYS.approvals, String(next.approvals)),
+      ]);
+    } catch {
+      // Backend ulaşılamadı — SecureStore default'larıyla devam et
+    }
+  };
+
+  const setNotifPref = async (key, value) => {
+    // 1) UI optimistik güncelle
+    setNotifPrefs((prev) => {
+      const next = { ...prev, [key]: value };
+      // 2) Backend'e gönder — 6 alanlı tam tercih payload'u (DTO field adları ile)
+      api.put('/api/users/me/notification-preferences', {
+        email: next.email,
+        push: next.push,
+        approvalRequests: next.approvals,
+        // SMS / contract updates / marketing UI'da yok; backend null geçince
+        // mevcut değerleri korumalı — null güvenli olduğunda bu yeterli.
+        // (Backend service tarafında null = "değişme" davranışı varsa.)
+      }).catch(() => {
+        // Hata olursa kullanıcıya rahatsızlık vermemek için sessiz —
+        // SecureStore en azından local olarak doğru kalır.
+      });
+      return next;
+    });
+    // 3) SecureStore'a yaz — App.js push gating bu değeri okuyor
+    try {
+      await SecureStore.setItemAsync(NOTIF_KEYS[key], String(value));
+    } catch {
+      // Yazma hatasi — UI'da false gosterilse de bir sonraki acilis default'a doner
+    }
+    // 4) Push toggle'i: ON yapilirsa device-token'i hemen backend'e gonder.
+    if (key === 'push' && value) {
+      try {
+        await pushNotificationService.registerForPushNotificationsAsync();
+      } catch {
+        // Izin reddi vs. — App.js'deki gibi kullaniciyi engellememeliyiz
+      }
+    }
+  };
 
   const loadUser = async () => {
     const userData = await authService.getCurrentUser();
@@ -201,16 +291,22 @@ export default function SettingsScreen({ navigation }) {
               icon="mail-outline"
               title="E-posta Bildirimleri"
               description="Sözleşme güncellemeleri için e-posta al"
+              value={notifPrefs.email}
+              onValueChange={(v) => setNotifPref('email', v)}
             />
             <SettingRow
               icon="notifications-outline"
               title="Push Bildirimleri"
               description="Anlık bildirimler al"
+              value={notifPrefs.push}
+              onValueChange={(v) => setNotifPref('push', v)}
             />
             <SettingRow
               icon="chatbubble-outline"
               title="Onay Bildirimleri"
               description="Onay işlemleri için bildirim al"
+              value={notifPrefs.approvals}
+              onValueChange={(v) => setNotifPref('approvals', v)}
             />
           </Card>
         );
@@ -278,7 +374,8 @@ export default function SettingsScreen({ navigation }) {
   );
 }
 
-function SettingRow({ icon, title, description, onPress, actionIcon }) {
+function SettingRow({ icon, title, description, onPress, actionIcon, value, onValueChange }) {
+  const hasSwitch = typeof onValueChange === 'function';
   const inner = (
     <View style={styles.settingRow}>
       <View style={styles.settingIcon}>
@@ -288,12 +385,22 @@ function SettingRow({ icon, title, description, onPress, actionIcon }) {
         <Text style={styles.settingTitle}>{title}</Text>
         <Text style={styles.settingDesc}>{description}</Text>
       </View>
-      {actionIcon && (
+      {hasSwitch ? (
+        <Switch
+          value={!!value}
+          onValueChange={onValueChange}
+          trackColor={{ false: colors.surfaceAlt, true: colors.accent }}
+          thumbColor="#fff"
+          ios_backgroundColor={colors.surfaceAlt}
+        />
+      ) : actionIcon ? (
         <Ionicons name={actionIcon} size={18} color={colors.textMuted} />
-      )}
+      ) : null}
     </View>
   );
-  if (onPress) {
+  // Switch'in kendi tap alani var; row'u ayrica TouchableOpacity ile sarmak
+  // hem dokunma hedeflerini cakistirir hem de istem disi toggle'a yol acar.
+  if (onPress && !hasSwitch) {
     return <TouchableOpacity onPress={onPress} activeOpacity={0.7}>{inner}</TouchableOpacity>;
   }
   return inner;

@@ -18,6 +18,7 @@ import {
   DMSans_700Bold,
 } from '@expo-google-fonts/dm-sans';
 import * as SplashScreen from 'expo-splash-screen';
+import * as SecureStore from 'expo-secure-store';
 
 import { colors, fonts } from './src/styles/tokens';
 import authService from './src/services/auth.service';
@@ -165,6 +166,10 @@ export default function App() {
     const registerPush = async () => {
       if (isAuthenticated) {
         try {
+          // Settings ekranindaki "Push Bildirimleri" toggle'i kapaliysa
+          // device-token'i backend'e gondermiyoruz. Default: ON.
+          const pushPref = await SecureStore.getItemAsync('notif:push');
+          if (pushPref === 'false') return;
           await pushNotificationService.registerForPushNotificationsAsync();
         } catch {
           // Push registration hatasi login akisini bloklamamali.
@@ -220,7 +225,9 @@ export default function App() {
                 <Stack.Screen name="Login">
                   {(props) => <LoginScreen {...props} onLoginSuccess={() => setIsAuthenticated(true)} />}
                 </Stack.Screen>
-                <Stack.Screen name="Register" component={RegisterScreen} />
+                <Stack.Screen name="Register">
+                  {(props) => <RegisterScreen {...props} onLoginSuccess={() => setIsAuthenticated(true)} />}
+                </Stack.Screen>
               </>
             )}
           </Stack.Navigator>

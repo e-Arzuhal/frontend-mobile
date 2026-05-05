@@ -8,6 +8,9 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import * as SecureStore from 'expo-secure-store';
 import { colors, fonts, radius, shadows } from '../styles/tokens';
 import Header from '../components/Header';
 import Card from '../components/Card';
@@ -16,6 +19,7 @@ import Button from '../components/Button';
 import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
 import verificationService from '../services/verification.service';
+import { API_BASE_URL } from '../config/api.config';
 
 const typeLabels = {
   SALES: 'Satış Sözleşmesi',
@@ -43,6 +47,7 @@ export default function ContractDetailScreen({ route, navigation }) {
   const [contract, setContract] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [requiredClauses, setRequiredClauses] = useState(null);
   const [loadingClauses, setLoadingClauses] = useState(false);
 
@@ -127,6 +132,27 @@ export default function ContractDetailScreen({ route, navigation }) {
       Alert.alert('Hata', error.message || 'İşlem başarısız.');
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleViewPdf = async () => {
+    if (!contract?.id) return;
+    setPdfLoading(true);
+    try {
+      const token = await SecureStore.getItemAsync('authToken');
+      const pdfUrl = `${API_BASE_URL}/api/contracts/${contract.id}/pdf`;
+      const localPath = `${FileSystem.cacheDirectory}sozlesme_${contract.id}.pdf`;
+      await FileSystem.downloadAsync(pdfUrl, localPath, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await Sharing.shareAsync(localPath, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'PDF Görüntüle / İndir',
+      });
+    } catch (e) {
+      Alert.alert('Hata', 'PDF açılamadı: ' + (e.message || 'Bilinmeyen hata'));
+    } finally {
+      setPdfLoading(false);
     }
   };
 
@@ -277,6 +303,18 @@ export default function ContractDetailScreen({ route, navigation }) {
         )}
       </Card>
 
+      {/* PDF Görüntüle / İndir — her durumda göster, kayıtlı her sözleşme
+          için backend PDF üretiyor. Status'tan bağımsız. */}
+      <Button
+        title={pdfLoading ? 'PDF Hazırlanıyor...' : 'PDF Görüntüle / İndir'}
+        variant="accent"
+        fullWidth
+        loading={pdfLoading}
+        onPress={handleViewPdf}
+        icon={<Ionicons name="document-text-outline" size={18} color={colors.textInverse} />}
+        style={styles.pdfButton}
+      />
+
       {contract.status === 'DRAFT' && (
         <View style={styles.actions}>
           <Button
@@ -385,6 +423,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text,
     lineHeight: 22,
+  },
+  pdfButton: {
+    marginTop: 8,
+    marginBottom: 12,
   },
   actions: {
     flexDirection: 'row',
