@@ -14,13 +14,17 @@ class ApiService {
   async request(endpoint, options = {}) {
     const url = `${this.baseUrl}${endpoint}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    // timeoutMs: çağıran istek bazında özel timeout belirleyebilir. Chatbot
+    // gibi LLM çağrılarında varsayılan 30s yetmiyor (NLP intent + Gemini =
+    // 20-40s) — chatbot.service 60s kullanıyor.
+    const effectiveTimeout = options.timeoutMs || this.timeout;
+    const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
 
     // skipAuthHandler: 401 alındığında global oturum temizleme/Login yönlendirme
     // tetiklenmesin. Sözleşme oluştururken TC kimlik lookup gibi yan akışlarda
     // 401 (sunucu yanlış yapılandırılmışsa) kullanıcıyı form ortasında çıkışa
     // zorlamaz; çağıran kod 401'i normal hata gibi yakalar.
-    const { skipAuthHandler, headers: customHeaders, ...fetchOpts } = options;
+    const { skipAuthHandler, timeoutMs, headers: customHeaders, ...fetchOpts } = options;
     const headers = { 'Content-Type': 'application/json', ...customHeaders };
     const token = await SecureStore.getItemAsync('authToken');
     if (token) headers['Authorization'] = `Bearer ${token}`;
