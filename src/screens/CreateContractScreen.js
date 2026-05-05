@@ -27,6 +27,7 @@ import contractService from '../services/contract.service';
 import { API_BASE_URL } from '../config/api.config';
 import useVoiceInput from '../hooks/useVoiceInput';
 import verificationService from '../services/verification.service';
+import { labelForClause, placeholderForClause } from '../utils/clauseLabels';
 
 const TOTAL_STEPS = 4;
 const stepLabels = ['Metin Girişi', 'Sözleşme Önerisi', 'Önizleme & Karşı Taraf', 'Tamamlandı'];
@@ -183,12 +184,14 @@ export default function CreateContractScreen({ navigation }) {
       .map((s, i) => ({ s, i }))
       .filter(({ i }) => selectedSuggestions[i]);
     if (selectedEntries.length === 0) return form.content;
-    // Kullanıcı bir değer girdiyse "field_name: value", girmediyse maddeyi
-    // soru olarak değil, daha sade "field_name: belirtilecek" şeklinde ekle.
+    // PDF'te insan-okur label kullan (örn. "Ödeme Yöntemi: ..."); kullanıcı
+    // değer girmediyse [belirtilecek] olarak işaretle ki ne soru cümlesi
+    // ne de boş kalsın.
     const additions = selectedEntries
       .map(({ s, i }) => {
         const v = (suggestionValues[i] || '').trim();
-        return `\n\n${s.field_name}: ${v || '[belirtilecek]'}`;
+        const label = labelForClause(s) || s.field_name;
+        return `\n\n${label}: ${v || '[belirtilecek]'}`;
       })
       .join('');
     return form.content + '\n\n--- Ek Maddeler ---' + additions;
@@ -400,17 +403,22 @@ export default function CreateContractScreen({ navigation }) {
                 <Ionicons name="flash" size={14} color={colors.accent} />
                 <Text style={styles.subsectionTitle}>Zorunlu Maddeler</Text>
               </View>
+              {/* labelForClause backend snake_case'i ("taraf_isveren") Türkçe
+                  insan-okur label'a çevirir; field.name çoğu zaman boş geliyor
+                  ve eskiden satırlar boş görünüyordu. */}
               {matched.map((field, i) => (
                 <View key={i} style={styles.mandatoryItem}>
                   <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-                  <Text style={styles.mandatoryName}>{field.name || field.field_name}</Text>
+                  <Text style={styles.mandatoryName}>
+                    {labelForClause(field) || field.name || field.field_name || 'Madde'}
+                  </Text>
                 </View>
               ))}
               {missingRequired.map((field, i) => (
                 <View key={i} style={[styles.mandatoryItem, styles.mandatoryItemMissing]}>
                   <Ionicons name="alert-circle" size={16} color={colors.error} />
                   <Text style={[styles.mandatoryName, { color: colors.error }]}>
-                    {field.name || field.field_name}
+                    {labelForClause(field) || field.name || field.field_name || 'Eksik Madde'}
                   </Text>
                 </View>
               ))}
@@ -431,6 +439,7 @@ export default function CreateContractScreen({ navigation }) {
             {suggestions.map((suggestion, index) => {
               const isChecked = !!selectedSuggestions[index];
               const isRecommended = suggestion.necessity === 'required';
+              const friendlyLabel = labelForClause(suggestion) || suggestion.field_name;
               return (
                 <View key={index} style={[styles.suggestionItem, isChecked && styles.suggestionItemSelected]}>
                   <TouchableOpacity
@@ -443,7 +452,7 @@ export default function CreateContractScreen({ navigation }) {
                     </View>
                     <View style={styles.suggestionInfo}>
                       <View style={styles.suggestionNameRow}>
-                        <Text style={styles.suggestionField}>{suggestion.field_name}</Text>
+                        <Text style={styles.suggestionField}>{friendlyLabel}</Text>
                         {isRecommended && (
                           <View style={styles.recommendedBadge}>
                             <Text style={styles.recommendedBadgeText}>Tavsiye Edilen</Text>
@@ -464,10 +473,10 @@ export default function CreateContractScreen({ navigation }) {
                   {isChecked && (
                     <View style={styles.suggestionValueWrap}>
                       <Input
-                        label={`${suggestion.field_name} değeri`}
+                        label={`${friendlyLabel} değeri`}
                         value={suggestionValues[index] || ''}
                         onChangeText={(v) => setSuggestionValue(index, v)}
-                        placeholder="Bu madde için değer girin"
+                        placeholder={placeholderForClause(suggestion) || 'Bu madde için değer girin'}
                       />
                     </View>
                   )}
