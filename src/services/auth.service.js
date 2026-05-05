@@ -1,6 +1,11 @@
 import api from './api.service';
 import * as SecureStore from 'expo-secure-store';
 
+// App.js logout sonrası Login ekranına dönmek için bir callback register eder.
+// authService.logout() bu callback'i çağırarak state'i sıfırlar.
+let _onLogout = null;
+export const setOnLogout = (cb) => { _onLogout = cb; };
+
 class AuthService {
   async register(userData) {
     const response = await api.post('/api/auth/register', {
@@ -37,6 +42,12 @@ class AuthService {
   async logout() {
     await SecureStore.deleteItemAsync('authToken');
     await SecureStore.deleteItemAsync('user');
+    // SettingsScreen'den çağrıldığında App.js otomatik olarak Login ekranına
+    // dönsün diye callback'i tetikle. NavigationContainer.onStateChange tek
+    // başına yeterli değil — kullanıcı navigate etmedikçe state taze kalmaz.
+    if (_onLogout) {
+      try { _onLogout(); } catch {}
+    }
   }
 
   /** E-posta'ya 6 haneli şifre sıfırlama kodu gönderme talebi. */

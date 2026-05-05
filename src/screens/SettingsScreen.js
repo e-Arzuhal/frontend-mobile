@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   Alert,
   Switch,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
@@ -47,6 +49,15 @@ export default function SettingsScreen({ navigation }) {
     push: true,
     approvals: true,
   });
+
+  // 2FA durumu — backend `users/me` üzerinden çekilir; toggle modal akışı.
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [twoFactorModal, setTwoFactorModal] = useState(null); // 'enable' | 'disable' | null
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorSending, setTwoFactorSending] = useState(false);
+  const [twoFactorVerifying, setTwoFactorVerifying] = useState(false);
+  const [twoFactorInfo, setTwoFactorInfo] = useState('');
+  const [twoFactorError, setTwoFactorError] = useState('');
 
   useEffect(() => {
     loadUser();
@@ -133,6 +144,59 @@ export default function SettingsScreen({ navigation }) {
         lastName: userData.lastName || '',
         email: userData.email || '',
       });
+      if (typeof userData.twoFactorEnabled === 'boolean') {
+        setTwoFactorEnabled(userData.twoFactorEnabled);
+      }
+    }
+    // Backend'den taze değeri çek — SecureStore'daki user payload'u eski olabilir.
+    try {
+      const remote = await api.get('/api/users/me');
+      if (typeof remote?.twoFactorEnabled === 'boolean') {
+        setTwoFactorEnabled(remote.twoFactorEnabled);
+      }
+    } catch {
+      // Backend ulaşılamadı — local değer kullanılır
+    }
+  };
+
+  const open2faModal = async () => {
+    const action = twoFactorEnabled ? 'disable' : 'enable';
+    setTwoFactorModal(action);
+    setTwoFactorCode('');
+    setTwoFactorError('');
+    setTwoFactorInfo('');
+    setTwoFactorSending(true);
+    try {
+      await authService.send2faCode(action);
+      setTwoFactorInfo('6 haneli doğrulama kodu e-posta adresinize gönderildi.');
+    } catch (e) {
+      setTwoFactorError(e?.message || 'Kod gönderilemedi.');
+    } finally {
+      setTwoFactorSending(false);
+    }
+  };
+
+  const verify2faCode = async () => {
+    if (!twoFactorCode || twoFactorCode.length < 4) {
+      setTwoFactorError('Lütfen e-posta ile gelen kodu girin.');
+      return;
+    }
+    setTwoFactorVerifying(true);
+    setTwoFactorError('');
+    try {
+      await authService.verify2faCode(twoFactorCode.trim(), twoFactorModal);
+      setTwoFactorEnabled((prev) => !prev);
+      setTwoFactorModal(null);
+      Alert.alert(
+        'Başarılı',
+        twoFactorModal === 'enable'
+          ? 'İki adımlı doğrulama etkinleştirildi.'
+          : 'İki adımlı doğrulama kapatıldı.'
+      );
+    } catch (e) {
+      setTwoFactorError(e?.message || 'Doğrulama başarısız. Kodu kontrol edip tekrar deneyin.');
+    } finally {
+      setTwoFactorVerifying(false);
     }
   };
 
@@ -250,6 +314,17 @@ export default function SettingsScreen({ navigation }) {
               description="TC Kimlik Kartınızı NFC ile doğrulayın"
               onPress={() => navigation.navigate('Verification')}
               actionIcon="chevron-forward"
+            />
+            <SettingRow
+              icon="key-outline"
+              title="İki Adımlı Doğrulama (2FA)"
+              description={
+                twoFactorEnabled
+                  ? 'Etkin · Giriş sırasında e-postanıza kod gönderilir'
+                  : 'Hesabınız için ek güvenlik katmanı ekleyin'
+              }
+              value={twoFactorEnabled}
+              onValueChange={() => open2faModal()}
             />
             <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Şifre Değiştir</Text>
             <Input
@@ -370,6 +445,59 @@ export default function SettingsScreen({ navigation }) {
         style={styles.logoutButton}
       />
     </ScrollView>
+
+    <Modal
+      visible={!!twoFactorModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setTwoFactorModal(null)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>
+            {twoFactorModal === 'enable'
+              ? 'İki Adımlı Doğrulamayı Aç'
+              : 'İki Adımlı Doğrulamayı Kapat'}
+          </Text>
+          <Text style={styles.modalDesc}>
+            {twoFactorSending
+              ? 'Kod gönderiliyor...'
+              : twoFactorInfo || 'E-postanıza gelen 6 haneli kodu girin.'}
+          </Text>
+          <Input
+            label="Doğrulama Kodu"
+            value={twoFactorCode}
+            onChangeText={(v) => setTwoFactorCode(v.replace(/\D/g, '').slice(0, 6))}
+            placeholder="123456"
+            keyboardType="numeric"
+            maxLength={6}
+          />
+          {twoFactorError ? (
+            <Text style={styles.modalError}>{twoFactorError}</Text>
+          ) : null}
+          <View style={styles.modalActions}>
+            <Button
+              title="İptal"
+              variant="outline"
+              onPress={() => setTwoFactorModal(null)}
+              style={styles.modalButton}
+            />
+            <Button
+              title="Doğrula"
+              variant="accent"
+              loading={twoFactorVerifying}
+              onPress={verify2faCode}
+              style={[styles.modalButton, styles.modalButtonRight]}
+            />
+          </View>
+          {!twoFactorSending && (
+            <TouchableOpacity onPress={open2faModal} style={styles.resendBtn}>
+              <Text style={styles.resendText}>Kodu tekrar gönder</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    </Modal>
     </ScreenWrapper>
   );
 }
@@ -517,5 +645,50 @@ const styles = StyleSheet.create({
   },
   logoutButton: {
     marginTop: 24,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    padding: 22,
+  },
+  modalTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 18,
+    color: colors.text,
+    marginBottom: 6,
+  },
+  modalDesc: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginBottom: 14,
+    lineHeight: 19,
+  },
+  modalError: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.error,
+    marginTop: 4,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    marginTop: 16,
+  },
+  modalButton: { flex: 1 },
+  modalButtonRight: { marginLeft: 10 },
+  resendBtn: { alignSelf: 'center', marginTop: 12, padding: 6 },
+  resendText: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: 12,
+    color: colors.accent,
   },
 });

@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { colors, fonts, radius, shadows } from '../styles/tokens';
 import Header from '../components/Header';
 import Card from '../components/Card';
@@ -26,6 +27,7 @@ import contractService from '../services/contract.service';
 import { API_BASE_URL } from '../config/api.config';
 import useVoiceInput from '../hooks/useVoiceInput';
 import verificationService from '../services/verification.service';
+import { labelForClause, placeholderForClause } from '../utils/clauseLabels';
 
 const TOTAL_STEPS = 4;
 const stepLabels = ['Metin Girişi', 'Sözleşme Önerisi', 'Önizleme & Karşı Taraf', 'Tamamlandı'];
@@ -58,6 +60,9 @@ const ENTITY_LABELS = {
 };
 
 export default function CreateContractScreen({ navigation }) {
+  // Tab navigator alt tab'ı yüzünden form alttayken klavye TextArea'yı kapatıyordu;
+  // KeyboardAvoidingView'a tab bar yüksekliğini offset olarak ver.
+  const tabBarHeight = useBottomTabBarHeight();
   const [currentStep, setCurrentStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [savedContractId, setSavedContractId] = useState(null);
@@ -77,6 +82,10 @@ export default function CreateContractScreen({ navigation }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [selectedSuggestions, setSelectedSuggestions] = useState({});
+  // Seçilen önerilen maddelerin kullanıcı tarafından girilen değerleri.
+  // Önceden öneri metnindeki soru cümlesi (örn. "Aylık kira tutarı?") direkt
+  // PDF'e ekleniyordu — bu artık `field_name: value` olarak yazılıyor.
+  const [suggestionValues, setSuggestionValues] = useState({});
 
   /* ── Voice-to-Text ── */
   const handleVoiceResult = useCallback((text) => {
@@ -138,9 +147,9 @@ export default function CreateContractScreen({ navigation }) {
       const fields = result.nlp_result?.extracted_fields;
       if (fields) {
         if (fields.tutar && !form.amount) updateField('amount', fields.tutar);
-        if (fields.taraflar?.length && !form.counterpartyName) {
-          updateField('counterpartyName', fields.taraflar[0]);
-        }
+        // counterpartyName analiz çıktısından otomatik doldurulmaz —
+        // mahremiyet gereği karşı tarafın adını TC sorgusundan değil,
+        // kullanıcının elle girmesinden alıyoruz.
       }
     } catch (error) {
       Alert.alert('Analiz Hatası', error.message || 'Metin analiz edilemedi. Devam edebilirsiniz.');
@@ -165,11 +174,26 @@ export default function CreateContractScreen({ navigation }) {
     setSelectedSuggestions((prev) => ({ ...prev, [index]: !prev[index] }));
   };
 
+  const setSuggestionValue = (index, value) => {
+    setSuggestionValues((prev) => ({ ...prev, [index]: value }));
+  };
+
   const getEnrichedContent = () => {
     const suggestions = analysisResult?.graphrag_result?.suggestions?.suggestions || [];
-    const selected = suggestions.filter((_, i) => selectedSuggestions[i]);
-    if (selected.length === 0) return form.content;
-    const additions = selected.map((s) => `\n\n[${s.field_name}]: ${s.message}`).join('');
+    const selectedEntries = suggestions
+      .map((s, i) => ({ s, i }))
+      .filter(({ i }) => selectedSuggestions[i]);
+    if (selectedEntries.length === 0) return form.content;
+    // PDF'te insan-okur label kullan (örn. "Ödeme Yöntemi: ..."); kullanıcı
+    // değer girmediyse [belirtilecek] olarak işaretle ki ne soru cümlesi
+    // ne de boş kalsın.
+    const additions = selectedEntries
+      .map(({ s, i }) => {
+        const v = (suggestionValues[i] || '').trim();
+        const label = labelForClause(s) || s.field_name;
+        return `\n\n${label}: ${v || '[belirtilecek]'}`;
+      })
+      .join('');
     return form.content + '\n\n--- Ek Maddeler ---' + additions;
   };
 
@@ -294,6 +318,7 @@ export default function CreateContractScreen({ navigation }) {
     setErrors({});
     setAnalysisResult(null);
     setSelectedSuggestions({});
+    setSuggestionValues({});
     setSavedContractId(null);
     setTcLookupResult(null);
   };
@@ -378,17 +403,22 @@ export default function CreateContractScreen({ navigation }) {
                 <Ionicons name="flash" size={14} color={colors.accent} />
                 <Text style={styles.subsectionTitle}>Zorunlu Maddeler</Text>
               </View>
+              {/* labelForClause backend snake_case'i ("taraf_isveren") Türkçe
+                  insan-okur label'a çevirir; field.name çoğu zaman boş geliyor
+                  ve eskiden satırlar boş görünüyordu. */}
               {matched.map((field, i) => (
                 <View key={i} style={styles.mandatoryItem}>
                   <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-                  <Text style={styles.mandatoryName}>{field.name || field.field_name}</Text>
+                  <Text style={styles.mandatoryName}>
+                    {labelForClause(field) || field.name || field.field_name || 'Madde'}
+                  </Text>
                 </View>
               ))}
               {missingRequired.map((field, i) => (
                 <View key={i} style={[styles.mandatoryItem, styles.mandatoryItemMissing]}>
                   <Ionicons name="alert-circle" size={16} color={colors.error} />
                   <Text style={[styles.mandatoryName, { color: colors.error }]}>
-                    {field.name || field.field_name}
+                    {labelForClause(field) || field.name || field.field_name || 'Eksik Madde'}
                   </Text>
                 </View>
               ))}
@@ -409,36 +439,48 @@ export default function CreateContractScreen({ navigation }) {
             {suggestions.map((suggestion, index) => {
               const isChecked = !!selectedSuggestions[index];
               const isRecommended = suggestion.necessity === 'required';
+              const friendlyLabel = labelForClause(suggestion) || suggestion.field_name;
               return (
-                <TouchableOpacity
-                  key={index}
-                  style={[styles.suggestionItem, isChecked && styles.suggestionItemSelected]}
-                  onPress={() => toggleSuggestion(index)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
-                    {isChecked && <Ionicons name="checkmark" size={11} color="#fff" />}
-                  </View>
-                  <View style={styles.suggestionInfo}>
-                    <View style={styles.suggestionNameRow}>
-                      <Text style={styles.suggestionField}>{suggestion.field_name}</Text>
-                      {isRecommended && (
-                        <View style={styles.recommendedBadge}>
-                          <Text style={styles.recommendedBadgeText}>Tavsiye Edilen</Text>
+                <View key={index} style={[styles.suggestionItem, isChecked && styles.suggestionItemSelected]}>
+                  <TouchableOpacity
+                    style={styles.suggestionRow}
+                    onPress={() => toggleSuggestion(index)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
+                      {isChecked && <Ionicons name="checkmark" size={11} color="#fff" />}
+                    </View>
+                    <View style={styles.suggestionInfo}>
+                      <View style={styles.suggestionNameRow}>
+                        <Text style={styles.suggestionField}>{friendlyLabel}</Text>
+                        {isRecommended && (
+                          <View style={styles.recommendedBadge}>
+                            <Text style={styles.recommendedBadgeText}>Tavsiye Edilen</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.suggestionMessage}>{suggestion.message}</Text>
+                      {suggestion.usage_percent != null && (
+                        <View style={styles.usageRow}>
+                          <Ionicons name="stats-chart-outline" size={12} color={colors.textMuted} />
+                          <Text style={styles.usageText}>
+                            Kullanıcıların %{suggestion.usage_percent}'i ekledi
+                          </Text>
                         </View>
                       )}
                     </View>
-                    <Text style={styles.suggestionMessage}>{suggestion.message}</Text>
-                    {suggestion.usage_percent != null && (
-                      <View style={styles.usageRow}>
-                        <Ionicons name="stats-chart-outline" size={12} color={colors.textMuted} />
-                        <Text style={styles.usageText}>
-                          Kullanıcıların %{suggestion.usage_percent}'i ekledi
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </TouchableOpacity>
+                  </TouchableOpacity>
+                  {isChecked && (
+                    <View style={styles.suggestionValueWrap}>
+                      <Input
+                        label={`${friendlyLabel} değeri`}
+                        value={suggestionValues[index] || ''}
+                        onChangeText={(v) => setSuggestionValue(index, v)}
+                        placeholder={placeholderForClause(suggestion) || 'Bu madde için değer girin'}
+                      />
+                    </View>
+                  )}
+                </View>
               );
             })}
           </Card>
@@ -454,6 +496,18 @@ export default function CreateContractScreen({ navigation }) {
         />
       </>
     );
+  };
+
+  // Başlık form.title boşsa analiz sonucundan otomatik türetilir;
+  // önizleme/PDF preview ile handleSave tutarlı başlık göstersin diye
+  // ortak bir helper.
+  const resolveTitle = () => {
+    const auto =
+      analysisResult?.contract_type_display ||
+      TYPE_LABELS[form.type] ||
+      TYPE_LABELS[analysisResult?.contract_type] ||
+      'Yeni Sözleşme';
+    return (form.title.trim() || auto).toUpperCase();
   };
 
   // Step 2: PDF Önizleme
@@ -486,7 +540,7 @@ export default function CreateContractScreen({ navigation }) {
 
         {/* Sözleşme İçerik Önizlemesi */}
         <Card style={styles.previewPaper}>
-          <Text style={styles.previewTitle}>{form.title.toUpperCase()}</Text>
+          <Text style={styles.previewTitle}>{resolveTitle()}</Text>
           <Text style={styles.previewMeta}>Tarih: {today}</Text>
           <View style={styles.previewDivider} />
           <Text style={styles.previewContent}>{getEnrichedContent()}</Text>
@@ -654,7 +708,8 @@ export default function CreateContractScreen({ navigation }) {
     <ScreenWrapper>
       <KeyboardAvoidingView
         style={styles.kav}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={tabBarHeight}
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
@@ -858,15 +913,23 @@ const styles = StyleSheet.create({
 
   // Suggestion items
   suggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
     padding: 12,
     marginBottom: 10,
     backgroundColor: colors.surface,
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  suggestionValueWrap: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
   suggestionItemSelected: {
     borderColor: colors.primary,

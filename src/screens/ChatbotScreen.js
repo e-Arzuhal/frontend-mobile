@@ -13,6 +13,7 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { colors, fonts, radius, shadows } from '../styles/tokens';
 import ScreenWrapper from '../components/ScreenWrapper';
 import Header from '../components/Header';
@@ -33,6 +34,10 @@ const SUGGESTED_INITIAL = [
 ];
 
 export default function ChatbotScreen() {
+  // Tab navigator içindeki KeyboardAvoidingView, tab bar yüksekliğini bilmediği
+  // için klavye açıldığında input + öneri çipleri tab bar'ın altında kalıyordu.
+  // Tab bar height'ı offset'e ekleyerek alttaki içerik klavyenin tam üstüne çıksın.
+  const tabBarHeight = useBottomTabBarHeight();
   const [messages, setMessages] = useState([INITIAL_MESSAGE]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -145,8 +150,8 @@ export default function ChatbotScreen() {
 
       <KeyboardAvoidingView
         style={styles.kav}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={tabBarHeight}
       >
         {/* Mesaj Listesi */}
         <FlatList
@@ -199,7 +204,9 @@ export default function ChatbotScreen() {
           </View>
         )}
 
-        {/* Önerilen Sorular */}
+        {/* Önerilen Sorular — uzun soru metinleri çipte iki satıra
+            taşıp scroll'un yarısını kapatıyordu; numberOfLines=1 ile tek
+            satıra zorla, çiplerin shrink olmasını engelle. */}
         {suggested.length > 0 && !loading && contractOptions.length === 0 && (
           <ScrollView
             horizontal
@@ -214,7 +221,9 @@ export default function ChatbotScreen() {
                 onPress={() => send(q)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.suggestionChipText}>{q}</Text>
+                <Text style={styles.suggestionChipText} numberOfLines={1}>
+                  {q}
+                </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -331,22 +340,27 @@ const styles = StyleSheet.create({
   // Önerilen sorular
   suggestedScroll: {
     flexGrow: 0,
+    flexShrink: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
+    backgroundColor: colors.card,
   },
   suggestedContainer: {
     paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 8,
     flexDirection: 'row',
+    alignItems: 'center',
   },
   suggestionChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    flexShrink: 0,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: radius.full,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.card,
+    backgroundColor: colors.surface,
+    maxWidth: 260,
   },
   suggestionChipText: {
     fontFamily: fonts.body,

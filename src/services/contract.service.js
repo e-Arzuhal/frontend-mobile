@@ -1,7 +1,10 @@
 import api from './api.service';
 
 const contractService = {
-  analyze: (text) => api.post('/api/analysis/analyze', { text }),
+  // NLP intent + spaCy NER + GraphRAG + Gemini açıklama zinciri toplam 30-60sn
+  // sürebiliyor — varsayılan 30sn timeout sözleşme analizini sıklıkla iptal
+  // ediyordu. 90sn'ye çıkarıyoruz (chatbot.service de 60sn kullanıyor).
+  analyze: (text) => api.post('/api/analysis/analyze', { text }, { timeoutMs: 90000 }),
   create: (data) => api.post('/api/contracts', data),
   // skipAuthHandler: backend yanlışlıkla 401 dönerse kullanıcıyı sözleşme
   // oluşturma formunun ortasında oturumdan düşürmeyelim; çağıran kod
