@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { Platform } from 'react-native';
 
 // expo-speech-recognition is a native module. Its top-level
 // `requireNativeModule("ExpoSpeechRecognition")` call throws synchronously
@@ -27,23 +28,43 @@ const useSpeechRecognitionEvent = nativeUseSpeechRecognitionEvent || (() => {});
 
 /**
  * React Native hook for voice-to-text using expo-speech-recognition.
- * Uses the device's native speech recognition engine.
+ * Cihazın native ses tanıma motorunu kullanır (Android'de Google Speech
+ * Services, iOS'te Siri/SFSpeechRecognizer).
  *
  * @param {Object} options
  * @param {string} options.lang - Dil kodu (varsayılan: 'tr-TR')
- * @param {function} options.onResult - Her tanınan metin parçası için callback
+ * @param {boolean} options.continuous - Cümle sonunda durmayıp dinlemeye
+ *   devam etsin mi (chatbot/uzun metin için true). Varsayılan: true.
+ * @param {boolean} options.interimResults - Konuşurken anlık transkript göster.
+ *   Varsayılan: true.
+ * @param {function} options.onResult - Her tanınan metin parçası için callback.
+ *   Sadece final sonuçlar gönderilir (interim sonuçlar burada üretilmez).
  * @param {function} options.onError - Hata callback'i
  */
-export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}) {
+export default function useVoiceInput({
+  lang = 'tr-TR',
+  continuous = true,
+  interimResults = true,
+  onResult,
+  onError,
+} = {}) {
   const [isListening, setIsListening] = useState(false);
-  const [isAvailable, setIsAvailable] = useState(false);
+  // Native modül linklendiyse mikrofonu en azından dene; isRecognitionAvailable
+  // bazı cihazlarda false dönüp start()'ın aslında çalıştığı durumlar var,
+  // o yüzden gating'i sadece SPEECH_AVAILABLE üzerinden yapıyoruz. Buton
+  // gizlenmesin diye `isSupported` aliası SPEECH_AVAILABLE'e set edilir.
+  const [isAvailable, setIsAvailable] = useState(SPEECH_AVAILABLE);
   const onResultRef = useRef(onResult);
   const onErrorRef = useRef(onError);
+  // Cümle bittiğinde son final transcript'i tekrar göndermeyelim diye guard.
+  const lastFinalRef = useRef('');
 
   useEffect(() => { onResultRef.current = onResult; }, [onResult]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
-  // Cihazda speech recognition var mı kontrol et
+  // Cihazda speech recognition mevcudiyetini sor — false dönerse de
+  // butonu yok etmek yerine kullanıcının denemesine izin ver; gerçek
+  // hata mesajı start() tetiklendiğinde gösterilecek.
   useEffect(() => {
     if (!SPEECH_AVAILABLE) {
       setIsAvailable(false);
@@ -52,10 +73,10 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
     let cancelled = false;
     try {
       ExpoSpeechRecognitionModule.isRecognitionAvailable()
-        .then((available) => { if (!cancelled) setIsAvailable(available); })
-        .catch(() => { if (!cancelled) setIsAvailable(false); });
+        .then((available) => { if (!cancelled && available) setIsAvailable(true); })
+        .catch(() => { /* check başarısız → buton görünür kalır, start() denenir */ });
     } catch {
-      setIsAvailable(false);
+      // sessizce geç — buton görünür kalır
     }
     return () => { cancelled = true; };
   }, []);
@@ -75,16 +96,23 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
 
   // Event listeners (no-op if module unavailable)
   useSpeechRecognitionEvent('result', (event) => {
-    // Son final sonucu al
-    if (event.isFinal && event.results?.length > 0) {
-      const transcript = event.results[0]?.transcript;
-      if (transcript && onResultRef.current) {
-        onResultRef.current(transcript);
-      }
+    if (!event?.results?.length) return;
+    const transcript = event.results[0]?.transcript;
+    if (!transcript) return;
+    if (event.isFinal) {
+      // continuous=true modunda native motor "result" final + ardından "end"
+      // göndermez; sadece final result gönderir ve dinlemeye devam eder.
+      // Aynı transcript birden fazla kez tetiklenirse mükerrer eklemeyi engelle.
+      if (transcript === lastFinalRef.current) return;
+      lastFinalRef.current = transcript;
+      onResultRef.current?.(transcript);
     }
   });
 
-  useSpeechRecognitionEvent('start', () => setIsListening(true));
+  useSpeechRecognitionEvent('start', () => {
+    lastFinalRef.current = '';
+    setIsListening(true);
+  });
 
   useSpeechRecognitionEvent('end', () => setIsListening(false));
 
@@ -92,38 +120,67 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
     setIsListening(false);
     if (onErrorRef.current) {
       const messages = {
-        'not-allowed': 'Mikrofon izni reddedildi. Ayarlardan izin verin.',
+        'not-allowed': 'Mikrofon izni reddedildi. Telefon ayarlarından izin verin.',
+        'service-not-allowed': 'Ses tanıma izni reddedildi. Telefon ayarlarından izin verin.',
         'no-speech': 'Konuşma algılanamadı. Tekrar deneyin.',
+        'audio-capture': 'Mikrofon bulunamadı veya başka bir uygulama tarafından kullanılıyor.',
         'network': 'Ağ hatası. İnternet bağlantınızı kontrol edin.',
+        'aborted': null, // kullanıcı kendisi durdurdu — sessiz geç
+        'language-not-supported': 'Türkçe ses tanıma bu cihazda desteklenmiyor.',
       };
-      onErrorRef.current(messages[event.error] || `Ses tanıma hatası: ${event.error}`);
+      const msg = messages[event.error];
+      if (msg !== null) {
+        onErrorRef.current(msg || `Ses tanıma hatası: ${event.error || 'bilinmeyen'}`);
+      }
     }
   });
 
   const startListening = useCallback(async () => {
-    if (!SPEECH_AVAILABLE || !isAvailable) return;
+    if (!SPEECH_AVAILABLE) {
+      onErrorRef.current?.('Bu sürümde ses tanıma desteklenmiyor.');
+      return;
+    }
 
     try {
-      // İzin kontrolü
+      // İzin akışı: önce mikrofon + ses tanıma izinlerini iste. Android 13+
+      // RECORD_AUDIO runtime izni ister; iOS hem NSMicrophoneUsage hem
+      // NSSpeechRecognitionUsage izni ister.
       const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-      if (!result.granted) {
-        onErrorRef.current?.('Mikrofon izni reddedildi. Ayarlardan izin verin.');
+      if (!result?.granted) {
+        onErrorRef.current?.(
+          'Mikrofon ve ses tanıma izni gereklidir. Lütfen telefon ayarlarından izin verin.'
+        );
         return;
       }
 
+      lastFinalRef.current = '';
+
       ExpoSpeechRecognitionModule.start({
         lang,
-        interimResults: false,
-        continuous: false, // Her cümle sonrası durur — daha stabil
+        interimResults,
+        continuous,
+        // iOS'te otomatik noktalama
+        addsPunctuation: true,
+        // Android: cihaz dahili modeli tercih et (offline çalışabilir);
+        // yoksa native motor online'a fallback eder.
+        ...(Platform.OS === 'android'
+          ? {
+              requiresOnDeviceRecognition: false,
+              androidIntentOptions: {
+                EXTRA_LANGUAGE_PREFERENCE: lang,
+                // Daha uzun konuşmalar için sessizlik toleransı
+                EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 2000,
+                EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 2000,
+              },
+            }
+          : {}),
       });
     } catch (err) {
-      // İzin promise'i veya start() reject olursa kullanıcıyı bilgilendir,
-      // aksi halde mic butonuna basmak sessizce hiçbir şey yapmaz.
       onErrorRef.current?.(
         `Ses tanıma başlatılamadı: ${err?.message || err}`
       );
     }
-  }, [isAvailable, lang]);
+  }, [lang, continuous, interimResults]);
 
   const stopListening = useCallback(() => {
     if (!SPEECH_AVAILABLE) return;
@@ -142,5 +199,16 @@ export default function useVoiceInput({ lang = 'tr-TR', onResult, onError } = {}
     }
   }, [isListening, startListening, stopListening]);
 
-  return { isListening, isAvailable, startListening, stopListening, toggleListening };
+  // isSupported ve isAvailable iki ayrı isim altında dön: çağıran ekranlar
+  // ya birini ya diğerini kullanıyor (web frontend `isSupported`, mobile
+  // `isAvailable` bekliyor).
+  return {
+    isListening,
+    isAvailable: SPEECH_AVAILABLE,
+    isSupported: SPEECH_AVAILABLE,
+    isRecognitionAvailable: isAvailable,
+    startListening,
+    stopListening,
+    toggleListening,
+  };
 }
