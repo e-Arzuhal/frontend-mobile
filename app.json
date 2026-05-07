@@ -42,6 +42,7 @@
     },
     "plugins": [
       "./plugins/withAndroidCleartext",
+      "./plugins/withAndroidGradleHeap",
       "expo-secure-store",
       "expo-font",
       [
