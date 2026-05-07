@@ -20,7 +20,6 @@ import ScreenWrapper from '../components/ScreenWrapper';
 import contractService from '../services/contract.service';
 import verificationService from '../services/verification.service';
 import { API_BASE_URL } from '../config/api.config';
-import { labelForClause } from '../utils/clauseLabels';
 
 const typeLabels = {
   SALES: 'Satış Sözleşmesi',
@@ -259,7 +258,7 @@ export default function ContractDetailScreen({ route, navigation }) {
             ) : (
               (requiredClauses.mandatoryClauses || []).map((c, i) => (
                 <View key={`m-${i}`} style={[styles.clauseRow, styles.clauseRowMandatory]}>
-                  <Text style={styles.clauseName}>{labelForClause(c.name || c.clause) || `Madde ${i + 1}`}</Text>
+                  <Text style={styles.clauseName}>{c.name || c.clause || `Madde ${i + 1}`}</Text>
                   {!!c.description && (
                     <Text style={styles.clauseDescription}>{c.description}</Text>
                   )}
@@ -274,7 +273,7 @@ export default function ContractDetailScreen({ route, navigation }) {
                 </Text>
                 {(requiredClauses.optionalClauses || []).map((c, i) => (
                   <View key={`o-${i}`} style={styles.clauseRow}>
-                    <Text style={styles.clauseName}>{labelForClause(c.name || c.clause) || `Madde ${i + 1}`}</Text>
+                    <Text style={styles.clauseName}>{c.name || c.clause || `Madde ${i + 1}`}</Text>
                     {!!c.description && (
                       <Text style={styles.clauseDescription}>{c.description}</Text>
                     )}
