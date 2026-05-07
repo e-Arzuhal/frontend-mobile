@@ -146,7 +146,11 @@ export default function ChatbotScreen() {
 
   return (
     <ScreenWrapper>
-      <Header title="Yardım Asistanı" subtitle="Size nasıl yardımcı olabiliriz?" />
+      {/* Diğer sekmelerdeki ile aynı yatay padding (20px) — Header doğrudan
+          ScreenWrapper'ın çocuğuyken ekran kenarına yapışıyordu. */}
+      <View style={styles.headerWrap}>
+        <Header title="Yardım Asistanı" subtitle="Size nasıl yardımcı olabiliriz?" />
+      </View>
 
       <KeyboardAvoidingView
         style={styles.kav}
@@ -275,6 +279,10 @@ export default function ChatbotScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerWrap: {
+    paddingHorizontal: 20,
+    paddingTop: 4,
+  },
   kav: { flex: 1 },
 
   messageList: {

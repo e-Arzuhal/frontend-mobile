@@ -117,6 +117,28 @@ class PushNotificationService {
     this._receivedSub = null;
     this._responseSub = null;
   }
+
+  /**
+   * Sunucu tarafında yeni bir bildirim oluştuğunda anında cihaz bildirimi
+   * tetikle. Expo Push servisinin (FCM/APNS) düzgün kurulmadığı durumlarda
+   * en azından uygulama açıkken (veya kısa süre arka plandayken) kullanıcı
+   * bildirimi görür. Backend'in /api/notifications GET çıktısı kullanılır.
+   */
+  async presentLocalNotification({ title, body, data }) {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: title || 'Bildirim',
+          body: body || '',
+          data: data || {},
+          sound: 'default',
+        },
+        trigger: null, // hemen göster
+      });
+    } catch {
+      // Cihaz bildirim göstermeyi reddederse sessizce geç.
+    }
+  }
 }
 
 const pushNotificationService = new PushNotificationService();

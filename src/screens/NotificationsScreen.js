@@ -126,7 +126,12 @@ export default function NotificationsScreen({ navigation }) {
 
   return (
     <ScreenWrapper>
-      <Header title="Bildirimler" subtitle="Sözleşme onayları ve güncellemeler" />
+      {/* Diğer sekmelerle aynı yatay padding (20px) — Header doğrudan
+          ScreenWrapper altına yerleştirildiğinde ekran kenarına yapışıyor
+          ve dengesiz görünüyordu. */}
+      <View style={styles.headerWrap}>
+        <Header title="Bildirimler" subtitle="Sözleşme onayları ve güncellemeler" />
+      </View>
       <View style={styles.actionsBar}>
         <Text style={styles.countText}>
           {items.filter((n) => !n.read).length} okunmamış
@@ -170,6 +175,10 @@ export default function NotificationsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  headerWrap: {
+    paddingHorizontal: 20,
+    paddingTop: 4,
+  },
   actionsBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',

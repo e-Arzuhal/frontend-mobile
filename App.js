@@ -24,6 +24,7 @@ import { colors, fonts } from './src/styles/tokens';
 import authService, { setOnLogout } from './src/services/auth.service';
 import { setOnUnauthorized } from './src/services/api.service';
 import pushNotificationService from './src/services/pushNotification.service';
+import notificationService from './src/services/notification.service';
 import DisclaimerModal, { checkDisclaimerAccepted } from './src/components/DisclaimerModal';
 
 import LoginScreen from './src/screens/LoginScreen';
@@ -213,8 +214,47 @@ export default function App() {
       });
     }
 
+    // In-app push fallback: Expo Push (FCM/APNS) düzgün konfigüre edilmediğinde
+    // bile en azından uygulama açıkken kullanıcı yeni bildirimleri kaçırmasın.
+    // Backend'den 30 saniyede bir kontrol et; yeni gelen ID'ler için cihazda
+    // yerel bildirim göster. Notifications tab zaten okunmamışı işaretliyor.
+    let lastSeenIds = new Set();
+    let firstPoll = true;
+    let pollHandle = null;
+    if (isAuthenticated) {
+      const poll = async () => {
+        try {
+          const items = await notificationService.list(false);
+          if (!Array.isArray(items)) return;
+          const ids = new Set(items.map((n) => n.id));
+          if (firstPoll) {
+            // İlk açılışta var olan eski bildirimleri local notification olarak
+            // tekrar göstermeyelim — yalnızca bundan sonra gelenleri tetikle.
+            lastSeenIds = ids;
+            firstPoll = false;
+            return;
+          }
+          for (const n of items) {
+            if (!lastSeenIds.has(n.id) && !n.read) {
+              await pushNotificationService.presentLocalNotification({
+                title: n.title || 'Bildirim',
+                body: n.message || '',
+                data: { contractId: n.contractId, type: n.type, notificationId: n.id },
+              });
+            }
+          }
+          lastSeenIds = ids;
+        } catch {
+          // Poller hatası kullanıcıyı engellemesin
+        }
+      };
+      poll();
+      pollHandle = setInterval(poll, 30000);
+    }
+
     return () => {
       pushNotificationService.removeListeners();
+      if (pollHandle) clearInterval(pollHandle);
     };
   }, [isAuthenticated]);
 
@@ -226,6 +266,20 @@ export default function App() {
       if (!accepted) setShowDisclaimer(true);
     }
   };
+
+  // Login/Register sonrası tetiklenir — disclaimer kabul edilmemişse hemen
+  // göster. Önceden register sonrası ana ekrana geçince DisclaimerModal
+  // tetiklenmediği için kullanıcı uygulamayı kapatıp açmadan görmüyordu.
+  const handleAuthSuccess = useCallback(async () => {
+    setIsAuthenticated(true);
+    try {
+      const accepted = await checkDisclaimerAccepted();
+      if (!accepted) setShowDisclaimer(true);
+    } catch {
+      // disclaimer kontrolü hata verirse modali yine de göster
+      setShowDisclaimer(true);
+    }
+  }, []);
 
   const onLayoutRootView = useCallback(async () => {
     if (fontsLoaded && isAuthenticated !== null) {
@@ -262,10 +316,10 @@ export default function App() {
             ) : (
               <>
                 <Stack.Screen name="Login">
-                  {(props) => <LoginScreen {...props} onLoginSuccess={() => setIsAuthenticated(true)} />}
+                  {(props) => <LoginScreen {...props} onLoginSuccess={handleAuthSuccess} />}
                 </Stack.Screen>
                 <Stack.Screen name="Register">
-                  {(props) => <RegisterScreen {...props} onLoginSuccess={() => setIsAuthenticated(true)} />}
+                  {(props) => <RegisterScreen {...props} onLoginSuccess={handleAuthSuccess} />}
                 </Stack.Screen>
               </>
             )}
