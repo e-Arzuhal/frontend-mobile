@@ -152,10 +152,16 @@ export default function ChatbotScreen() {
         <Header title="Yardım Asistanı" subtitle="Size nasıl yardımcı olabiliriz?" />
       </View>
 
+      {/* Android: native adjustResize klavye açıldığında tab bar dahil
+          her şeyi yukarı iter; KeyboardAvoidingView "height" ile birlikte
+          kullanılınca offset KALICI olarak rezerve ediliyordu ve klavye
+          kapansa bile alt boşluk açık kalıyordu. Android'de behavior=undefined
+          bırakıyoruz → klavyenin kapanması da içeriği eski yerine geri çeker.
+          iOS'te padding gerekli; tab bar yüksekliğini offset olarak ekleriz. */}
       <KeyboardAvoidingView
         style={styles.kav}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={tabBarHeight}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
       >
         {/* Mesaj Listesi */}
         <FlatList

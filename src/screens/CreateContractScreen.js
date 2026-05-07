@@ -706,10 +706,13 @@ export default function CreateContractScreen({ navigation }) {
 
   return (
     <ScreenWrapper>
+      {/* Android: native adjustResize klavye davranışını yönetir; behavior="height"
+          ile birlikte offset kalıcı boşluk bıraktığı için Android'de behavior
+          uygulamıyoruz. iOS'te padding + tab bar offset gerekiyor. */}
       <KeyboardAvoidingView
         style={styles.kav}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={tabBarHeight}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
